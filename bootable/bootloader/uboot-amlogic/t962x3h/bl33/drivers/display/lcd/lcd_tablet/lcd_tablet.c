@@ -222,6 +222,17 @@ static int lcd_config_load_from_dts(char *dt_addr, struct lcd_config_s *pconf)
 		pconf->lcd_timing.vsync_pol   = (unsigned short)(be32_to_cpup((((u32*)propdata)+5)));
 	}
 
+	propdata = (char *)fdt_getprop(dt_addr, child_offset, "pre_de", NULL);
+	if (!propdata) {
+		if (lcd_debug_print_flag)
+			LCDERR("failed to get pre_de\n");
+		pconf->lcd_timing.pre_de_h = 0;
+		pconf->lcd_timing.pre_de_v = 0;
+	} else {
+		pconf->lcd_timing.pre_de_h = (unsigned char)(be32_to_cpup((u32 *)propdata));
+		pconf->lcd_timing.pre_de_v = (unsigned char)(be32_to_cpup((((u32 *)propdata) + 1)));
+	}
+
 	propdata = (char *)fdt_getprop(dt_addr, child_offset, "clk_attr", NULL);
 	if (propdata == NULL) {
 		LCDERR("failed to get clk_attr\n");
@@ -473,6 +484,8 @@ static int lcd_config_load_from_bsp(struct lcd_config_s *pconf)
 	pconf->lcd_timing.vsync_width = ext_lcd->vsync_width;
 	pconf->lcd_timing.vsync_bp    = ext_lcd->vsync_bp;
 	pconf->lcd_timing.vsync_pol    = ext_lcd->vsync_pol;
+	pconf->lcd_timing.pre_de_h    = 0;
+	pconf->lcd_timing.pre_de_v    = 0;
 
 	/* fr_adjust_type */
 	temp = ext_lcd->customer_val_0;
@@ -674,7 +687,8 @@ static int lcd_config_load_from_unifykey(struct lcd_config_s *pconf)
 		LCDPR("unifykey header:\n");
 		LCDPR("crc32             = 0x%08x\n", lcd_header.crc32);
 		LCDPR("data_len          = %d\n", lcd_header.data_len);
-		LCDPR("reserved          = 0x%04x\n", lcd_header.reserved);
+		LCDPR("block_next_flag   = %d\n", lcd_header.block_next_flag);
+		LCDPR("block_cur_size    = 0x%04x\n", lcd_header.block_cur_size);
 	}
 
 	/* step 2: check lcd parameters */
@@ -709,15 +723,17 @@ static int lcd_config_load_from_unifykey(struct lcd_config_s *pconf)
 		((*(p + LCD_UKEY_H_PERIOD + 1)) << 8);
 	pconf->lcd_basic.v_period = (*(p + LCD_UKEY_V_PERIOD)) |
 		((*(p + LCD_UKEY_V_PERIOD + 1)) << 8);
-	pconf->lcd_timing.hsync_width = (*(p + LCD_UKEY_HS_WIDTH) |
-		((*(p + LCD_UKEY_HS_WIDTH + 1)) << 8));
+	temp = *(unsigned short *)(p + LCD_UKEY_HS_WIDTH_POL);
+	pconf->lcd_timing.hsync_width = temp & 0xfff;
+	pconf->lcd_timing.hsync_pol = (temp >> 12) & 0xf;
 	pconf->lcd_timing.hsync_bp = (*(p + LCD_UKEY_HS_BP) | ((*(p + LCD_UKEY_HS_BP + 1)) << 8));
-	pconf->lcd_timing.hsync_pol = *(p + LCD_UKEY_HS_POL);
-	pconf->lcd_timing.vsync_width = (*(p + LCD_UKEY_VS_WIDTH) |
-		((*(p + LCD_UKEY_VS_WIDTH + 1)) << 8));
+	temp = *(unsigned short *)(p + LCD_UKEY_VS_WIDTH_POL);
+	pconf->lcd_timing.vsync_width = temp & 0xfff;
+	pconf->lcd_timing.vsync_pol = (temp >> 12) & 0xf;
 	pconf->lcd_timing.vsync_bp = (*(p + LCD_UKEY_VS_BP) |
 		((*(p + LCD_UKEY_VS_BP + 1)) << 8));
-	pconf->lcd_timing.vsync_pol = *(p + LCD_UKEY_VS_POL);
+	pconf->lcd_timing.pre_de_h = *(p + LCD_UKEY_PRE_DE_H);
+	pconf->lcd_timing.pre_de_v = *(p + LCD_UKEY_PRE_DE_V);
 
 	/* customer: 31byte */
 	pconf->lcd_timing.fr_adjust_type = *(p + LCD_UKEY_FR_ADJ_TYPE);

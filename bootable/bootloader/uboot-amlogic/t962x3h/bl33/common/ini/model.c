@@ -109,6 +109,7 @@ static int transBufferData(const char *data_str, unsigned int data_buf[]) {
 static int check_param_valid(int mode, int parse_len, unsigned char parse_buf[], int ori_len, unsigned char ori_buf[])
 {
 	unsigned int ori_cal_crc32 = 0, parse_cal_crc32 = 0;
+	struct lcd_header_s head, head2;
 
 	if (mode == 0) {
 		// start check parse data valid
@@ -142,6 +143,27 @@ static int check_param_valid(int mode, int parse_len, unsigned char parse_buf[],
 			return CC_PARAM_CHECK_ERROR_NEED_UPDATE_PARAM;
 		}
 		// end check parse data valid
+	} else if (mode == 2) {
+		// start check parse data valid
+		//ALOGD("%s, start check parse data valid\n", __func__);
+		memcpy((void *)&head, (void *)parse_buf, sizeof(struct lcd_header_s));
+		if (check_hex_data_have_header_valid
+		    (&parse_cal_crc32, CC_MAX_DATA_SIZE,
+		    head.data_len, parse_buf) < 0)
+			return CC_PARAM_CHECK_ERROR_NOT_NEED_UPDATE_PARAM;
+
+		// start check flash key data valid
+		//ALOGD("%s, start check flash key data valid\n", __func__);
+		memcpy((void *)&head2, (void *)ori_buf, sizeof(struct lcd_header_s));
+		if (check_hex_data_have_header_valid
+		    (&ori_cal_crc32, CC_MAX_DATA_SIZE, head2.data_len,
+		    ori_buf) < 0)
+			return CC_PARAM_CHECK_ERROR_NEED_UPDATE_PARAM;
+
+		if (parse_cal_crc32 != ori_cal_crc32)
+		//ALOGE("%s, parse data not equal flash data(0x%08X, 0x%08X)\n",
+			//__func__, parse_cal_crc32, ori_cal_crc32);
+			return CC_PARAM_CHECK_ERROR_NEED_UPDATE_PARAM;
 	} else {
 		// start check parse data valid
 		//ALOGD("%s, start check parse data valid\n", __func__);
@@ -194,6 +216,18 @@ void *handle_lcd_ext_buf_get(void)
 }
 
 #ifdef CONFIG_AML_LCD_TCON
+int __attribute__((weak))
+	get_tcon_bin_size_by_id(int bin_id)
+{
+	return 0;
+}
+
+int __attribute__((weak))
+	read_tcon_bin_data_by_id(unsigned char *data_buf, int buf_size, int bin_id)
+{
+	return 0;
+}
+
 static unsigned int handle_tcon_char_data_size_align(unsigned int size)
 {
 	unsigned int new_size;
@@ -456,6 +490,7 @@ static int handle_lcd_basic(struct lcd_attr_s *p_attr)
 static int handle_lcd_timming(struct lcd_attr_s *p_attr)
 {
 	const char *ini_value = NULL;
+	unsigned int width, pol;
 
 	ini_value = IniGetString("lcd_Attr", "h_active", "1920");
 	if (model_debug_flag & DEBUG_LCD)
@@ -480,7 +515,7 @@ static int handle_lcd_timming(struct lcd_attr_s *p_attr)
 	ini_value = IniGetString("lcd_Attr", "hsync_width", "44");
 	if (model_debug_flag & DEBUG_LCD)
 		ALOGD("%s, hsync_width is (%s)\n", __func__, ini_value);
-	p_attr->timming.hsync_width = strtoul(ini_value, NULL, 0);
+	width = strtoul(ini_value, NULL, 0);
 
 	ini_value = IniGetString("lcd_Attr", "hsync_bp", "148");
 	if (model_debug_flag & DEBUG_LCD)
@@ -490,12 +525,13 @@ static int handle_lcd_timming(struct lcd_attr_s *p_attr)
 	ini_value = IniGetString("lcd_Attr", "hsync_pol", "0");
 	if (model_debug_flag & DEBUG_LCD)
 		ALOGD("%s, hsync_pol is (%s)\n", __func__, ini_value);
-	p_attr->timming.hsync_pol = strtoul(ini_value, NULL, 0);
+	pol = strtoul(ini_value, NULL, 0);
+	p_attr->timming.hsync_width_pol = ((pol & 0xf) << 12) | (width & 0xfff);
 
 	ini_value = IniGetString("lcd_Attr", "vsync_width", "5");
 	if (model_debug_flag & DEBUG_LCD)
 		ALOGD("%s, vsync_width is (%s)\n", __func__, ini_value);
-	p_attr->timming.vsync_width = strtoul(ini_value, NULL, 0);
+	width = strtoul(ini_value, NULL, 0);
 
 	ini_value = IniGetString("lcd_Attr", "vsync_bp", "30");
 	if (model_debug_flag & DEBUG_LCD)
@@ -505,7 +541,18 @@ static int handle_lcd_timming(struct lcd_attr_s *p_attr)
 	ini_value = IniGetString("lcd_Attr", "vsync_pol", "0");
 	if (model_debug_flag & DEBUG_LCD)
 		ALOGD("%s, vsync_pol is (%s)\n", __func__, ini_value);
-	p_attr->timming.vsync_pol = strtoul(ini_value, NULL, 0);
+	pol = strtoul(ini_value, NULL, 0);
+	p_attr->timming.vsync_width_pol = ((pol & 0xf) << 12) | (width & 0xfff);
+
+	ini_value = IniGetString("lcd_Attr", "pre_de_h", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, pre_de_h is (%s)\n", __func__, ini_value);
+	p_attr->timming.pre_de_h = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "pre_de_v", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, pre_de_v is (%s)\n", __func__, ini_value);
+	p_attr->timming.pre_de_v = strtoul(ini_value, NULL, 0);
 
 	return 0;
 }
@@ -699,6 +746,7 @@ static int handle_lcd_header(struct lcd_attr_s *p_attr)
 	gLcdDataCnt += sizeof(struct lcd_pwr_s) * g_lcd_pwr_off_seq_cnt;
 
 	p_attr->head.data_len = gLcdDataCnt;
+	p_attr->head.block_cur_size = gLcdDataCnt;
 
 	ini_value = IniGetString("lcd_Attr", "version", "null");
 	if (model_debug_flag & DEBUG_LCD)
@@ -708,8 +756,156 @@ static int handle_lcd_header(struct lcd_attr_s *p_attr)
 	else
 		p_attr->head.version = strtoul(ini_value, NULL, 0);
 
-	p_attr->head.rev = 0;
-	p_attr->head.crc32 = CalCRC32(0, (((unsigned char *)p_attr) + 4), gLcdDataCnt - 4);
+	//p_attr->head.rev = 0;
+	if (p_attr->head.version >= 2)
+		p_attr->head.block_next_flag = 1;
+
+	return 0;
+}
+
+static int handle_lcd_phy(struct lcd_v2_attr_s *p_attr)
+{
+	const char *ini_value = NULL;
+	unsigned int reg_buf[216];
+	unsigned int reg_cnt = 0;
+	int i, j = 0;
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_flag", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_flag is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_flag = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_0", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_0 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_0 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_1", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_1 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_1 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_2", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_2 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_2 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_3", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_3 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_3 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_4", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_4 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_4 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_5", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_5 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_5 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_6", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_6 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_6 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_7", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_7 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_7 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_8", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_8 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_8 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_9", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_9 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_9 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_10", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_10 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_10 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_attr_11", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_attr_11 is (%s)\n", __func__, ini_value);
+	p_attr->phy.phy_attr_11 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "phy_lane_pn_swap", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_lane_pn_swap is (%s)\n", __func__, ini_value);
+	j += reg_cnt;
+	reg_cnt = transBufferData(ini_value, reg_buf + 0);
+	for (i = 0; i < 4; i++)
+		p_attr->phy.phy_lane_pn_swap[i] = reg_buf[i];
+
+	ini_value = IniGetString("lcd_Attr", "phy_lane_ctrl", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_lane_ctrl is (%s)\n", __func__, ini_value);
+	j += reg_cnt;
+	reg_cnt = transBufferData(ini_value, reg_buf + reg_cnt);
+	for (i = 0; i < reg_cnt; i++) {
+		p_attr->phy.phy_lane_ctrl[i] = reg_buf[i + j];
+		ALOGD("%s, phy_lane_ctrl[%d] is (0x%x)\n", __func__,
+		      i, p_attr->phy.phy_lane_ctrl[i]);
+	}
+
+	ini_value = IniGetString("lcd_Attr", "phy_lane_swap", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, phy_lane_swap is (%s)\n", __func__, ini_value);
+	j += reg_cnt;
+	reg_cnt = transBufferData(ini_value, reg_buf + reg_cnt);
+	for (i = 0; i < reg_cnt; i++)
+		p_attr->phy.phy_lane_swap[i] = reg_buf[i + j];
+
+	return 0;
+}
+
+static int handle_lcd_ctrl(struct lcd_v2_attr_s *p_attr)
+{
+	const char *ini_value = NULL;
+
+	ini_value = IniGetString("lcd_Attr", "ctrl_attr_flag", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, ctrl_attr_flag is (%s)\n", __func__, ini_value);
+	p_attr->ctrl.ctrl_attr_flag = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "ctrl_attr_0", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, ctrl_attr_0 is (%s)\n", __func__, ini_value);
+	p_attr->ctrl.ctrl_attr_0 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "ctrl_attr_0_parm0", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, ctrl_attr_0_parm0 is (%s)\n", __func__, ini_value);
+	p_attr->ctrl.ctrl_attr_0_parm0 = strtoul(ini_value, NULL, 0);
+
+	ini_value = IniGetString("lcd_Attr", "ctrl_attr_0_parm1", "0");
+	if (model_debug_flag & DEBUG_LCD)
+		ALOGD("%s, ctrl_attr_0_parm1 is (%s)\n", __func__, ini_value);
+	p_attr->ctrl.ctrl_attr_0_parm1 = strtoul(ini_value, NULL, 0);
+
+	return 0;
+}
+
+static int handle_lcd_v2_header(struct lcd_v2_attr_s *p_attr)
+{
+	unsigned int data_cnt;
+
+	data_cnt = 0;
+	data_cnt += sizeof(struct lcd_header_s);
+	data_cnt += sizeof(struct lcd_ctrl_s);
+	data_cnt += sizeof(struct lcd_phy_s);
+
+	p_attr->head.crc32 = 0xffffffff;
+	p_attr->head.data_len = 0;
+	p_attr->head.version = 2;
+	p_attr->head.block_next_flag = 0;
+	p_attr->head.block_cur_size = data_cnt;
 
 	return 0;
 }
@@ -1028,6 +1224,7 @@ static int handle_lcd_ext_header(struct lcd_ext_attr_s *p_attr)
 		p_attr->head.version = strtoul(ini_value, NULL, 0);
 
 	p_attr->head.rev = 0;
+
 
 	memset((void *)tmp_buf, 0, CC_MAX_TEMP_BUF_SIZE);
 	lcd_ext_data_to_buf(tmp_buf, p_attr);
@@ -1767,14 +1964,22 @@ static int handle_tcon_spi(unsigned char *buff)
 }
 #endif
 
-static int parse_panel_ini(const char *file_name, struct lcd_attr_s *lcd_attr,
+static int parse_panel_ini(const char *file_name, unsigned char *lcd_buf,
 			   struct lcd_ext_attr_s *ext_attr,
 			   struct bl_attr_s *bl_attr,
 			   struct panel_misc_s *misc_attr,
 			   unsigned char *tcon_spi_buf)
 {
 
-	memset((void *)lcd_attr, 0, sizeof(struct lcd_attr_s));
+	struct lcd_attr_s lcd_attr;
+	struct lcd_v2_attr_s lcd_v2_attr;
+	unsigned int lcd_size = 0, lcd_buf_len = 0;
+	struct lcd_header_s *header;
+
+	lcd_buf_len = sizeof(struct lcd_attr_s) + sizeof(struct lcd_v2_attr_s);
+
+	memset((void *)&lcd_attr, 0, sizeof(struct lcd_attr_s));
+	memset((void *)&lcd_v2_attr, 0, sizeof(struct lcd_v2_attr_s));
 	memset((void *)bl_attr, 0, sizeof(struct bl_attr_s));
 
 	IniParserInit();
@@ -1793,15 +1998,48 @@ static int parse_panel_ini(const char *file_name, struct lcd_attr_s *lcd_attr,
 	}
 
 	/* handle lcd attr */
-	handle_lcd_basic(lcd_attr);
-	handle_lcd_timming(lcd_attr);
-	handle_lcd_customer(lcd_attr);
-	handle_lcd_interface(lcd_attr);
-	handle_lcd_pwr(lcd_attr);
-	handle_lcd_header(lcd_attr);
+	handle_lcd_basic(&lcd_attr);
+	handle_lcd_timming(&lcd_attr);
+	handle_lcd_customer(&lcd_attr);
+	handle_lcd_interface(&lcd_attr);
+	handle_lcd_pwr(&lcd_attr);
+	handle_lcd_header(&lcd_attr);
 
-	if (((lcd_attr->basic.lcd_type) == LCD_MLVDS) ||
-	    ((lcd_attr->basic.lcd_type) == LCD_P2P))
+	lcd_size = lcd_attr.head.block_cur_size;
+	if (lcd_size <= lcd_buf_len) {
+		memcpy((void *)lcd_buf, (void *)&lcd_attr, lcd_attr.head.block_cur_size);
+	} else {
+		ALOGE("%s, lcd_size(0x%x) > lcd_buf_len(0x%x)!\n", __func__, lcd_size, lcd_buf_len);
+		return -1;
+	}
+	/* handle lcd_v2 attr*/
+	if (lcd_attr.head.version == 2) {
+		handle_lcd_phy(&lcd_v2_attr);
+		handle_lcd_ctrl(&lcd_v2_attr);
+		handle_lcd_v2_header(&lcd_v2_attr);
+		lcd_size += lcd_v2_attr.head.block_cur_size;
+		if (lcd_size <= lcd_buf_len) {
+			memcpy((void *)(lcd_buf + lcd_attr.head.block_cur_size),
+				(void *)&lcd_v2_attr, lcd_v2_attr.head.block_cur_size);
+		} else {
+			ALOGE("%s, lcd_size(0x%x) > lcd_buf_len(0x%x)!\n", __func__, lcd_size, lcd_buf_len);
+			return -1;
+		}
+	}
+
+	header = (struct lcd_header_s *)lcd_buf;
+	gLcdDataCnt = lcd_size;
+	header->data_len = lcd_size;
+	header->crc32 = CalCRC32(0, (lcd_buf + 4), lcd_size - 4);
+	if (model_debug_flag & DEBUG_LCD) {
+		ALOGD("%s: data_len=%d, glcd_dcnt=%d, block1_size=%d, block2_size=%d\n",
+			__func__, header->data_len, gLcdDataCnt,
+			lcd_attr.head.block_cur_size,
+			lcd_v2_attr.head.block_cur_size);
+	}
+
+	if (lcd_attr.basic.lcd_type == LCD_MLVDS ||
+	    lcd_attr.basic.lcd_type == LCD_P2P)
 		g_lcd_tcon_valid = 1;
 	else
 		g_lcd_tcon_valid = 0;
@@ -1972,11 +2210,11 @@ extern int get_vcom_data(char *data, int len, int index); // board/amlogic/hazel
 static int handle_tcon_ext_pmu_data(int index, int flag, unsigned char *buf,
 				    unsigned int offset, unsigned int data_len)
 {
-	char *file_name, str[2][30];
-	unsigned int data_size = 0, i, file_find = 0;
+	char str[2][30];
+	unsigned int data_size = 0, i;
 	unsigned char *bin_buf = NULL;
 	char *ext_data = NULL, *vcom = NULL;
-	int vcom_start = 0, vcom_len = 0;
+	int vcom_start = 0, vcom_len = 0, ret = 0;
 	//model_debug_flag = 255;
 
 	if (!buf) {
@@ -2049,31 +2287,10 @@ static int handle_tcon_ext_pmu_data(int index, int flag, unsigned char *buf,
 		goto err_exit;
 	}
 
-	sprintf(str[0], "model_tcon_ext_b%d_spi", index);
-	sprintf(str[1], "model_tcon_ext_b%d", index);
-	while (i < 2) {
-		file_name = getenv(str[i]);
-		if (file_name == NULL) {
-			if (model_debug_flag & DEBUG_NORMAL)
-				ALOGD("%s: no %s path\n", __func__, str[i]);
-		} else {
-			if (iniIsFileExist(file_name)) {
-				if (model_debug_flag & DEBUG_NORMAL)
-					ALOGD("%s: %s: %s\n", __func__, str[i], file_name);
-				file_find = 1;
-				break;
-			}
-			if (model_debug_flag & DEBUG_NORMAL) {
-				ALOGE("%s: %s: \"%s\" not exist.\n",
-					__func__, str[i], file_name);
-			}
-		}
-		i++;
-	}
-	if (file_find == 0)
-		return -1;
+	sprintf(str[0], "tcon_pmu_data");
+	sprintf(str[1], "null");
+	data_size = get_tcon_bin_size_by_id(TCON_B0_SPI);
 
-	data_size = read_bin_file(file_name, LCD_EXTERN_INIT_ON_MAX);
 	if (data_size == 0) {
 		ALOGE("%s, %s data_size %d error!\n", __func__, str[i], data_size);
 		return -1;
@@ -2087,12 +2304,21 @@ static int handle_tcon_ext_pmu_data(int index, int flag, unsigned char *buf,
 	switch (flag) {
 	case 0:
 		buf[0] = data_size;
-		GetBinData(&buf[1], data_size);
+		ret = read_tcon_bin_data_by_id(&buf[1], data_size, TCON_B0_SPI);
+		if (ret) {
+			ALOGE("%s. can't read tcon_b0_spi_bin data", __func__);
+			return -1;
+		}
+
 		break;
 	case 1: /* data with reg addr auto fill */
 		buf[0] = (data_size + 1); /* data size include reg start */
 		buf[1] = 0x00;            /* reg start */
-		GetBinData(&buf[2], data_size);
+		ret = read_tcon_bin_data_by_id(&buf[2], data_size, TCON_B0_SPI);
+		if (ret) {
+			ALOGE("%s. can't read tcon_b0_spi_bin data", __func__);
+			return -1;
+		}
 		break;
 	case 2:
 		if (data_size < (offset + data_len - 1)) {
@@ -2109,7 +2335,11 @@ static int handle_tcon_ext_pmu_data(int index, int flag, unsigned char *buf,
 		}
 		buf[0] = data_len;
 		buf[1] = offset;
-		GetBinData(bin_buf, data_size);
+		ret = read_tcon_bin_data_by_id(bin_buf, data_size, TCON_B0_SPI);
+		if (ret) {
+			ALOGE("%s. can't read tcon_b0_spi_bin data", __func__);
+			return -1;
+		}
 		memcpy(&buf[2], &bin_buf[offset], data_len - 1);
 		free(bin_buf);
 		break;
@@ -2127,9 +2357,7 @@ static int handle_tcon_ext_pmu_data(int index, int flag, unsigned char *buf,
 	if (model_debug_flag & DEBUG_NORMAL)
 		ALOGD("%s %s finish\n", __func__, str[i]);
 
-	BinFileUninit();
-
-	return 0;
+	return ret;
 err_exit:
 	if (vcom)
 		free(vcom);
@@ -2414,38 +2642,26 @@ int handle_tcon_vac(unsigned char *vac_data, unsigned int vac_mem_size)
 int handle_tcon_demura_set(unsigned char *demura_set_data,
 			   unsigned int demura_set_size)
 {
-	unsigned long int bin_size;
-	char *file_name;
-	int n;
+	unsigned long bin_size;
+	int n, ret = 0;
 
-	file_name = getenv("model_tcon_demura_set");
-	if (file_name == NULL) {
-		if (model_debug_flag & DEBUG_NORMAL)
-			ALOGD("%s, no model_tcon_demura_set path\n", __func__);
-		return -1;
-	}
-
-	if ((demura_set_data == NULL) || (!demura_set_size)) {
+	n = 8;
+	if (!demura_set_data || !demura_set_size) {
 		ALOGE("%s, buffer or size error!!!\n", __func__);
 		return -1;
 	}
 
-	if (model_debug_flag & DEBUG_NORMAL)
-		ALOGD("%s: model_tcon_demura_set: %s\n", __func__, file_name);
-	if (!iniIsFileExist(file_name)) {
-		ALOGE("%s, file name \"%s\" not exist.\n", __func__, file_name);
-		return -1;
-	}
-
-	bin_size = read_bin_file(file_name, CC_MAX_TCON_DEMURA_SET_SIZE);
-	if (!bin_size || (bin_size > demura_set_size)) {
+	bin_size = get_tcon_bin_size_by_id(TCON_DEMURA_SET);
+	if (!bin_size || bin_size > demura_set_size) {
 		ALOGE("%s, bin_size 0x%lx error!(memory_size 0x%x)\n",
 		      __func__, bin_size, demura_set_size);
 		return -1;
 	}
-
-	n = 8;
-	GetBinData(&demura_set_data[n], bin_size);
+	ret = read_tcon_bin_data_by_id(&demura_set_data[n], bin_size, TCON_DEMURA_SET);
+	if (ret) {
+		ALOGE("%s, can't read tcon_demura_set in cri_partition\n", __func__);
+		return -1;
+	}
 
 	demura_set_data[0] = bin_size & 0xff;
 	demura_set_data[1] = (bin_size >> 8) & 0xff;
@@ -2460,46 +2676,33 @@ int handle_tcon_demura_set(unsigned char *demura_set_data,
 	if (model_debug_flag & DEBUG_NORMAL)
 		ALOGD("%s finish\n", __func__);
 
-	BinFileUninit();
 
-	return 0;
+	return ret;
 }
 
 int handle_tcon_demura_lut(unsigned char *demura_lut_data,
 			   unsigned int demura_lut_size)
 {
-	unsigned long int bin_size;
-	char *file_name;
-	int n;
+	unsigned long bin_size;
+	int n, ret = 0;
 
-	file_name = getenv("model_tcon_demura_lut");
-	if (file_name == NULL) {
-		if (model_debug_flag & DEBUG_NORMAL)
-			ALOGD("%s, no model_tcon_demura_lut path\n", __func__);
-		return -1;
-	}
-
-	if ((demura_lut_data == NULL) || (!demura_lut_size)) {
+	n = 8;
+	if (!demura_lut_data || !demura_lut_size) {
 		ALOGE("%s, buffer memory or size error!!!\n", __func__);
 		return -1;
 	}
 
-	if (model_debug_flag & DEBUG_NORMAL)
-		ALOGD("%s: model_tcon_demura_lut: %s\n", __func__, file_name);
-	if (!iniIsFileExist(file_name)) {
-		ALOGE("%s, file name \"%s\" not exist.\n", __func__, file_name);
-		return -1;
-	}
-
-	bin_size = read_bin_file(file_name, CC_MAX_TCON_DEMURA_LUT_SIZE);
-	if (!bin_size || (bin_size > demura_lut_size)) {
+	bin_size = get_tcon_bin_size_by_id(TCON_DEMURA_LUT);
+	if (!bin_size || bin_size > demura_lut_size) {
 		ALOGE("%s, bin_size 0x%lx error!(memory_size 0x%x)\n",
 		      __func__, bin_size, demura_lut_size);
 		return -1;
 	}
-
-	n = 8;
-	GetBinData(&demura_lut_data[n], bin_size);
+	ret = read_tcon_bin_data_by_id(&demura_lut_data[n], bin_size, TCON_DEMURA_LUT);
+	if (ret) {
+		ALOGE("%s, con't read demura_lut from cri partition\n", __func__);
+		return -1;
+	}
 
 	demura_lut_data[0] = bin_size & 0xff;
 	demura_lut_data[1] = (bin_size >> 8) & 0xff;
@@ -2514,9 +2717,7 @@ int handle_tcon_demura_lut(unsigned char *demura_lut_data,
 	if (model_debug_flag)
 		ALOGD("%s finish, bin_size = 0x%lx\n", __func__, bin_size);
 
-	BinFileUninit();
-
-	return 0;
+	return ret;
 }
 
 int handle_tcon_acc_lut(unsigned char *acc_lut_data, unsigned int acc_lut_size)
@@ -2669,9 +2870,9 @@ handle_tcon_data_load_next:
 
 int handle_panel_ini(void)
 {
-	int tmp_len = 0;
+	int tmp_len = 0, lcd_buf_len = 0;
 	unsigned char *tmp_buf = NULL;
-	struct lcd_attr_s lcd_attr;
+	unsigned char *lcd_buf = NULL;
 	struct bl_attr_s bl_attr;
 	struct panel_misc_s misc_attr;
 	unsigned char *tcon_spi = NULL;
@@ -2692,9 +2893,16 @@ int handle_panel_ini(void)
 		return -1;
 	}
 
-	tmp_buf = (unsigned char *) malloc(CC_MAX_DATA_SIZE);
-	if (tmp_buf == NULL) {
+	tmp_buf = (unsigned char *)malloc(CC_MAX_DATA_SIZE);
+	if (!tmp_buf) {
 		ALOGE("%s, malloc buffer memory error!!!\n", __func__);
+		return -1;
+	}
+
+	lcd_buf_len = sizeof(struct lcd_attr_s) + sizeof(struct lcd_v2_attr_s);
+	lcd_buf = (unsigned char *)malloc(lcd_buf_len);
+	if (!lcd_buf) {
+		ALOGE("%s, malloc lcd buffer memory error!!!\n", __func__);
 		return -1;
 	}
 
@@ -2714,7 +2922,7 @@ int handle_panel_ini(void)
 	}
 #endif
 
-	memset((void *)&lcd_attr, 0, sizeof(struct lcd_attr_s));
+	memset((void *)lcd_buf, 0, lcd_buf_len);
 	memset((void *)lcd_ext_attr, 0, sizeof(struct lcd_ext_attr_s));
 	memset((void *)&bl_attr, 0, sizeof(struct bl_attr_s));
 	memset((void *)&misc_attr, 0, sizeof(struct panel_misc_s));
@@ -2735,7 +2943,7 @@ int handle_panel_ini(void)
 		goto handle_panel_ini_err2;
 	}
 
-	if (parse_panel_ini(file_name, &lcd_attr, lcd_ext_attr, &bl_attr, &misc_attr, tcon_spi) < 0) {
+	if (parse_panel_ini(file_name, lcd_buf, lcd_ext_attr, &bl_attr, &misc_attr, tcon_spi) < 0) {
 		ALOGE("%s, parse_panel_ini file name \"%s\" fail.\n",
 		      __func__, file_name);
 		goto handle_panel_ini_err2;
@@ -2745,9 +2953,9 @@ int handle_panel_ini(void)
 	memset((void *)tmp_buf, 0, CC_MAX_DATA_SIZE);
 	tmp_len = ReadLCDParam(tmp_buf);
 	//ALOGD("%s, start check lcd param data (0x%x).\n", __func__, tmp_len);
-	if (check_param_valid(0, gLcdDataCnt, (unsigned char*)&lcd_attr, tmp_len, tmp_buf) == CC_PARAM_CHECK_ERROR_NEED_UPDATE_PARAM) {
+	if (check_param_valid(0, gLcdDataCnt, lcd_buf, tmp_len, tmp_buf) == CC_PARAM_CHECK_ERROR_NEED_UPDATE_PARAM) {
 		ALOGD("%s, check lcd param data error (0x%x), save lcd param.\n", __func__, tmp_len);
-		SaveLCDParam(gLcdDataCnt, (unsigned char*)&lcd_attr);
+		SaveLCDParam(gLcdDataCnt, lcd_buf);
 	}
 	// end handle lcd param
 
@@ -2791,6 +2999,9 @@ int handle_panel_ini(void)
 	tcon_spi = NULL;
 	free(tmp_buf);
 	tmp_buf = NULL;
+	memset((void *)lcd_buf, 0, lcd_buf_len);
+	free(lcd_buf);
+	lcd_buf = NULL;
 
 #ifdef CONFIG_AML_LCD_TCON
 	if (g_lcd_tcon_valid)

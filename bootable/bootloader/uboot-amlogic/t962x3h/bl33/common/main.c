@@ -200,6 +200,25 @@ static int break_command(void) {
 }
 
 
+static int break_command2(void) {
+        int key = 0;
+
+        // CHECK USER Input in uart
+        if (tstc()) {
+                key = getc();
+
+                //enter to stop;
+                if (key == 0x0d)
+                        return 1;/* Break Command */
+        }
+
+        return 0;
+}
+
+extern char  hwid[10];
+#define MERIDIAN_HARDWARE_ID_HVT "1110"
+#define MERIDIAN_HARDWARE_ID_DVT "0111"
+#define MERIDIANC_HARDWARE_ID_HVT "1001"
 
 /* We come here after U-Boot is initialised and ready to process commands */
 void main_loop(void)
@@ -216,6 +235,7 @@ void main_loop(void)
 	unsigned char *dt_addr = NULL;
 	extern int emmc_update_mbr(unsigned char *);
 	char oem_data[64] = {0};
+	char model_name[64] = {0};
 #endif /* DTB_BIND_KERNEL */
 #endif
 
@@ -302,7 +322,14 @@ void main_loop(void)
 						ret += run_command("ext4load mmc 1:d ${loadaddr} /logo_img_files/transition_done.bmp", 0);
 					}else {
 						//unlocked transition
-						ret += run_command("ext4load mmc 1:d ${loadaddr} /logo_img_files/transition_done_red.bmp", 0);
+						idme_get_var_external("model_name", model_name, sizeof(model_name));
+						if(strstr(model_name, "/tvconfig/modelc/") !=  NULL ) { //meridianC only
+							ret += run_command("ext4load mmc 1:d ${loadaddr} /logo_img_files/transition_done_red_ul.bmp", 0);
+							printf("meridianC:model_name=%s\n", model_name);
+
+						} else {
+							ret += run_command("ext4load mmc 1:d ${loadaddr} /logo_img_files/transition_done_red.bmp", 0);
+						}
 					}
 				} else{	//hazel-hh transition
 					ret += run_command("ext4load mmc 1:d ${loadaddr} /logo_img_files/transition_done.bmp", 0);
@@ -403,6 +430,15 @@ void main_loop(void)
 		exit fastboot, reset.
 		*/
 		do_reset(NULL, 0, 0, NULL);
+	} else if(break_command2() &&
+		(strcmp(MERIDIAN_HARDWARE_ID_DVT, hwid) == 0 ||
+		strcmp(MERIDIAN_HARDWARE_ID_HVT, hwid) == 0)) {
+		printf("***skip cold boot power standby\n");
+                run_command("mw ff638630 0 2", 0);
+                /*
+                Init LCD. it can avoid the board enter standby ,when use fastboot reboot command.
+                */
+                run_command("run init_display", 0);
 	} else
 		run_preboot_environment_command();
 

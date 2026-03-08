@@ -1328,6 +1328,16 @@ static void lcd_tcon_axi_mem_config_tl1(void)
 	}
 }
 
+//prepare tcon reserved memory when tcon not enable in bootloader
+int lcd_tcon_resv_mem_prepare(struct lcd_config_s *pconf)
+{
+	LCDPR("tcon: prepare reserved memory\n");
+#ifdef CONFIG_CMD_INI
+	lcd_tcon_bin_path_resv_mem_set();
+#endif
+	return 0;
+}
+
 static int lcd_tcon_mem_config(void)
 {
 	unsigned char *mem_vaddr;

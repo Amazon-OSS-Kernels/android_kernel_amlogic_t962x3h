@@ -52,10 +52,15 @@ static void lcd_timing_info_print(struct lcd_config_s * pconf)
 		"vs_width          %d\n"
 		"vs_backporch      %d\n"
 		"vs_pol            %d\n"
+		"pre_de_h          %d\n"
+		"pre_de_v          %d\n"
 		"video_on_pixel    %d\n"
 		"video_on_line     %d\n\n",
 		h_period, v_period, hs_width, hs_bp, hs_pol,
-		vs_width, vs_bp, vs_pol, video_on_pixel, video_on_line);
+		vs_width, vs_bp, vs_pol,
+		pconf->lcd_timing.pre_de_h,
+		pconf->lcd_timing.pre_de_v,
+		video_on_pixel, video_on_line);
 
 	printf("h_period_min      %d\n"
 		"h_period_max      %d\n"
@@ -297,6 +302,28 @@ static void lcd_info_print_p2p(struct lcd_config_s *pconf)
 	lcd_pinmux_info_print(pconf);
 }
 #endif
+
+static void lcd_phy_print(struct lcd_config_s *pconf)
+{
+	struct phy_config_s *phy = pconf->lcd_control.phy_cfg;
+	int i;
+
+	printf("vswing             %u\n"
+		"ext_pullup        %u\n"
+		"vcm               %u\n"
+		"mode              %u\n",
+		phy->vswing,
+		phy->ext_pullup,
+		phy->vcm,
+		phy->mode);
+	for (i = 0; i < phy->lane_num; i++) {
+		printf("lane%d_amp =       %u\n"
+			"lane%d_preem =     %u\n",
+			i, phy->lane[i].amp,
+			i, phy->lane[i].preem);
+	}
+	printf("\n");
+}
 
 static void lcd_reg_print_serializer(void)
 {
@@ -858,6 +885,8 @@ void aml_lcd_info_print(void)
 	} else {
 		LCDERR("%s: lcd_debug_info_if is null\n", __func__);
 	}
+
+	lcd_phy_print(pconf);
 
 	lcd_power_info_print(lcd_drv, 1);
 	lcd_power_info_print(lcd_drv, 0);

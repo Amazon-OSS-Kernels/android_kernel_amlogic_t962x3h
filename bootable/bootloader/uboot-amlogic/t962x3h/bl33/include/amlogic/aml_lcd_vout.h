@@ -154,6 +154,9 @@ struct lcd_timing_s {
 	unsigned int h_offset;
 	unsigned int v_offset;
 
+	unsigned char pre_de_h;
+	unsigned char pre_de_v;
+
 	unsigned short de_hs_addr;
 	unsigned short de_he_addr;
 	unsigned short de_vs_addr;
@@ -324,6 +327,27 @@ struct p2p_config_s {
 	unsigned int phy_preem;
 };
 
+struct phy_lane_s {
+	unsigned int preem;
+	unsigned int amp;
+};
+
+#define CH_LANE_MAX 32
+struct phy_config_s {
+	unsigned int flag;
+	unsigned int vswing;
+	unsigned int vcm;
+	unsigned int ext_pullup;
+	unsigned int odt;
+	unsigned int ref_bias;
+	unsigned int mode;
+	unsigned int weakly_pull_down;
+	struct phy_lane_s lane[CH_LANE_MAX];
+	unsigned int lane_num;
+	unsigned int vswing_level;
+	unsigned int preem_level;
+};
+
 struct lcd_ctrl_config_s {
 	struct ttl_config_s *ttl_config;
 	struct lvds_config_s *lvds_config;
@@ -331,6 +355,7 @@ struct lcd_ctrl_config_s {
 	struct dsi_config_s *mipi_config;
 	struct mlvds_config_s *mlvds_config;
 	struct p2p_config_s *p2p_config;
+	struct phy_config_s *phy_cfg;
 };
 
 /* **********************************
@@ -344,6 +369,7 @@ enum lcd_power_type_e {
 	LCD_POWER_TYPE_WAIT_GPIO,           /* 4 */
 	LCD_POWER_TYPE_CLK_SS,              /* 5 */
 	LCD_POWER_TYPE_TCON_SPI_DATA_LOAD,  /* 6 */
+	LCD_POWER_TYPE_SWITCH_DURATION,     /* 7 */
 	LCD_POWER_TYPE_MAX,
 };
 

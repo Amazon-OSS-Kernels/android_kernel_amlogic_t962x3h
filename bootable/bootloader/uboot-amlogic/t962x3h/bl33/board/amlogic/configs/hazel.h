@@ -134,7 +134,7 @@
 #define CONFIG_IR_REMOTE_POWER_UP_KEY_VAL3 0xF20DFE01 //amlogic tv ir --- ch-
 #define CONFIG_IR_REMOTE_POWER_UP_KEY_VAL4 0XBA45BD02 //amlogic small ir--- power
 #define CONFIG_IR_REMOTE_POWER_UP_KEY_VAL5 0xe51afb04
-/*https://wiki.labcollab.net/confluence/pages/viewpage.action?spaceKey=GINGERPLAT&title=Earthart+Firmware+Specification*/
+/*https://amazon.com*/
 
 #define CONFIG_IR_REMOTE_POWER_UP_KEY_VAL6	0xb9467d02 /* ABC power key */
 #define CONFIG_IR_REMOTE_POWER_UP_KEY_VAL7	0xa05f7d02 /* ABC netflix key */
@@ -551,6 +551,7 @@
                  "if fatload usb 0 ${loadaddr} update.bin 200; then bcb force_upgrade; fi;"\
                  "if fatload usb 0 ${loadaddr} flash_script; then uboot_update ${loadaddr}; fi;"\
                  "if fatload usb 0 ${loadaddr} usb_burn_package.img 200; then usb_burn usb_burn_package.img; fi;"\
+                 "if fatload usb 0 ${loadaddr} KV7636.bin; then i2c_tcon_upgrade ${loadaddr}; fi;"\
             "fi;"\
             "\0"\
 

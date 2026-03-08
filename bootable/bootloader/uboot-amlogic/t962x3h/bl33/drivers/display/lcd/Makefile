@@ -7,3 +7,4 @@ obj-$(CONFIG_AML_LCD_TABLET) += lcd_tablet/
 obj-$(CONFIG_AML_LCD_EXTERN) += lcd_extern/
 obj-$(CONFIG_AML_LOCAL_DIMMING) += aml_ldim/
 obj-$(CONFIG_AML_BL_EXTERN) += bl_extern/
+obj-$(CONFIG_AML_LCD_TCON) += i2c_tcon_upgrade/

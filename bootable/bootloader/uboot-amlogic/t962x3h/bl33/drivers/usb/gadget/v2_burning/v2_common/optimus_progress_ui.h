@@ -33,6 +33,10 @@ Description:
 #if CONFIG_SD_BURNING_SUPPORT_UI
 int show_logo_to_report_burning(void);//show bmp 'upgrade_upgrading'
 
+
+int show_logo_to_report_burning_ex(int percents);//show bmp 'upgrade_upgrading'
+
+
 int show_logo_to_report_burn_failed(void); //Display logo to report burning result is failed
 
 int show_logo_to_report_burn_success(void);

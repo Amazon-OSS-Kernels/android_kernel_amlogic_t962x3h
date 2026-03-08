@@ -328,6 +328,17 @@ int show_logo_to_report_burning(void)
     return _show_burn_logo("upgrade_upgrading_offset");
 }
 
+//Display logo to report platform is in burning state
+int show_logo_to_report_burning_ex(int percents)
+{
+    int ret;
+    *_cur_percents = percents;
+    lcd_printf("[OK]tcon upgrade");
+    ret = _show_burn_logo("upgrade_upgrading_offset");
+    _minui_screen_update(1);
+    return ret;
+}
+
 int show_logo_to_report_burn_success(void)
 {
     int ret = 0;
@@ -342,7 +353,7 @@ int show_logo_to_report_burn_success(void)
     return 0;
 }
 
-static int show_logo_report_burn_ui_error(void)
+int show_logo_report_burn_ui_error(void)
 {
     int ret = 0;
 

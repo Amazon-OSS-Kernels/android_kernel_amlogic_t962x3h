@@ -86,6 +86,177 @@ struct eth_board_socket*  eth_board_skt;
 #define LED_STATUS_ON         2     /* ON, the Brightness 20% */
 #define LED_STATUS_OFF        3     /* OFF*/
 
+#define CONFIG_MMC_BLOCK_SIZE     512
+#define CRI_RESERVE_NUM_OF_EMMC_BLOCKS   1024  /* reserve 512k for WB and Gamma; (512k)/512*/
+#define CRI_CONFIG_NUM_OF_EMMC_BLOCKS    7168  /* reserve 512k for WB and Gamma; (4M -512k)/512*/
+
+#define CRI_CONFIG_SIZE          (CRI_CONFIG_NUM_OF_EMMC_BLOCKS * CONFIG_MMC_BLOCK_SIZE)
+#define CRI_CONFIG_OFFSET        (CRI_RESERVE_NUM_OF_EMMC_BLOCKS * CONFIG_MMC_BLOCK_SIZE)
+
+#define CRI_DATA_TCON_B0_SPI_OFFSET         (CRI_CONFIG_OFFSET + CRI_CONFIG_SIZE)
+#define CRI_DATA_TCON_B0_SPI_SIZE           (CONFIG_MMC_BLOCK_SIZE * 2)
+#define CRI_DATA_TCON_DEMURA_SET_OFFSET		(CRI_DATA_TCON_B0_SPI_OFFSET + CRI_DATA_TCON_B0_SPI_SIZE)
+#define CRI_DATA_TCON_DEMURA_SET_SIZE       (CONFIG_MMC_BLOCK_SIZE * 2)
+#define CRI_DATA_TCON_DEMURA_LUT_OFFSET     (CRI_DATA_TCON_DEMURA_SET_OFFSET + CRI_DATA_TCON_DEMURA_SET_SIZE)
+#define CRI_DATA_TCON_DEMURA_LUT_SIZE       (CONFIG_MMC_BLOCK_SIZE * 512*2)
+#define CRI_DATA_TCON_DEMURA_CRC_OFFSET     (CRI_DATA_TCON_DEMURA_LUT_OFFSET + CRI_DATA_TCON_DEMURA_LUT_SIZE)
+#define CRI_DATA_TCON_DEMURA_CRC_SIZE       (CONFIG_MMC_BLOCK_SIZE)
+
+
+enum tcon_bin_id_t {
+	TCON_B0_SPI = 1,
+	TCON_DEMURA_SET,
+	TCON_DEMURA_LUT,
+	TCON_DEMURA_CRC,
+	TCON_BIN_MAX,
+};
+
+struct tcon_bin_head_t {
+	char magic[16];
+	int checksum;
+	int datasize;
+	/*data*/
+};
+
+int read_tcon_bin_data_by_id(char *data_buf, int buf_size, int bin_id)
+{
+	int ret;
+	int i;
+	struct tcon_bin_head_t tcon_bin_head;
+	int checksum  = 0;
+	char *temp_buf = NULL;
+	int headLen = 0;
+	char *magic[16]={0};
+	uint64_t offset;
+
+	if(NULL == data_buf || (bin_id < TCON_B0_SPI || bin_id >= TCON_BIN_MAX)) {
+		printf("[%s, %d] bad param, data_buf=0x%x, bin_id=%d\n", __FUNCTION__, __LINE__, data_buf, bin_id);
+		return -1;
+	}
+
+	if(bin_id == TCON_B0_SPI) {
+		strcpy(magic, "tcon_b0_spi");
+		offset = CRI_DATA_TCON_B0_SPI_OFFSET;
+	} else if (bin_id == TCON_DEMURA_SET) {
+		strcpy(magic, "tcon_demura_set");
+		offset = CRI_DATA_TCON_DEMURA_SET_OFFSET;
+	} else if (bin_id == TCON_DEMURA_LUT) {
+		strcpy(magic, "tcon_demura_lut");
+		offset = CRI_DATA_TCON_DEMURA_LUT_OFFSET;
+	} else if (bin_id == TCON_DEMURA_CRC) {
+		strcpy(magic, "tcon_demura_crc");
+		offset = CRI_DATA_TCON_DEMURA_CRC_OFFSET;
+	} else {
+		printf("[%s, %d] bad param, bin_id = %d\n", __FUNCTION__, __LINE__, bin_id);
+		return -1;
+	}
+
+	memset(&tcon_bin_head, 0x00, sizeof(tcon_bin_head));
+	ret = store_read_ops("cri_data", &tcon_bin_head, offset, (uint64_t)sizeof(tcon_bin_head));
+	if(0 != ret){
+		printf("[%s, %d] read tcon bin data failed, bin_id=%d\n", __FUNCTION__, __LINE__, bin_id);
+		return -1;
+	}
+
+	if(strcmp(tcon_bin_head.magic, magic))  {
+		printf("[%s, %d] no tcon bin data, bin_id=%d\n", __FUNCTION__, __LINE__, bin_id);
+		return -1;
+	}
+
+	printf("[%s, %d] magic=%s, checksum=0x%x, datasize=%d, bin_id=%d\n", __FUNCTION__, __LINE__,
+					tcon_bin_head.magic, tcon_bin_head.checksum, tcon_bin_head.datasize, bin_id);
+
+	if(buf_size != tcon_bin_head.datasize) {
+		printf("[%s, %d] bad param, bin_id =%d size:[%d, %d] \n", __FUNCTION__, __LINE__,
+													bin_id, buf_size, tcon_bin_head.datasize);
+		return -1;
+	}
+	/*printf("[%s] sizeof(tcon_bo_spi)=%d, [%lld, %d][%lld, %d]\n", __FUNCTION__,
+									sizeof(tcon_bin_head),
+									(uint64_t)(CRI_DATA_TCON_B0_SPI_OFFSET + sizeof(tcon_bo_spi)),
+									(uint64_t)(CRI_DATA_TCON_B0_SPI_OFFSET + sizeof(tcon_bo_spi)),
+									(uint64_t)tcon_bin_head.datasize, (uint64_t)tcon_bin_head.datasize);*/
+	temp_buf = (char *)malloc(sizeof(tcon_bin_head) + tcon_bin_head.datasize);
+	if(NULL == temp_buf) {
+		printf("[%s, %d] malloc faild,size=%d\n", __FUNCTION__, __LINE__, sizeof(tcon_bin_head) + tcon_bin_head.datasize);
+		return -1;
+	}
+	memset(temp_buf, 0x00, (sizeof(tcon_bin_head) + tcon_bin_head.datasize));
+	ret = store_read_ops("cri_data", temp_buf, offset, (uint64_t)(sizeof(tcon_bin_head) + tcon_bin_head.datasize));
+	if(0 != ret){
+		printf("[%s, %d] read tcon data failed, bin_id=%d\n", __FUNCTION__, __LINE__, bin_id);
+		return -1;
+	}
+
+	headLen = sizeof(tcon_bin_head);
+	for(i = 0; i < tcon_bin_head.datasize; i ++){
+		checksum  += temp_buf[headLen + i];
+		//printf("[%s, %d] data_buf[%d] = 0x%x\n", __FUNCTION__, __LINE__, i, temp_buf[headLen + i]);
+	}
+
+	checksum  = checksum  & 0xffffffff;
+
+	if (checksum != tcon_bin_head.checksum) {
+		printf("[%s, %d] data checksum failed, bin_id=%d\n", __FUNCTION__, __LINE__, bin_id);
+		return -1;
+	}
+
+	for(i = 0; i < tcon_bin_head.datasize; i ++){
+		data_buf[i]  = temp_buf[headLen + i];
+	}
+
+	free(temp_buf);
+	temp_buf = NULL;
+
+	return 0;
+}
+
+int get_tcon_bin_size_by_id(int bin_id)      //return data size, size=0 means not exist
+{
+	struct tcon_bin_head_t tcon_bin_head;
+	int ret;
+	char magic[16] = {0};
+	uint64_t offset;
+
+	if(bin_id < TCON_B0_SPI || bin_id >= TCON_BIN_MAX) {
+		printf("[%s, %d] bad param, bin_id = %d\n", __FUNCTION__, __LINE__, bin_id);
+		return -1;
+    }
+
+	if(bin_id == TCON_B0_SPI) {
+		strcpy(magic, "tcon_b0_spi");
+		offset = CRI_DATA_TCON_B0_SPI_OFFSET;
+	} else if (bin_id == TCON_DEMURA_SET) {
+		strcpy(magic, "tcon_demura_set");
+		offset = CRI_DATA_TCON_DEMURA_SET_OFFSET;
+	} else if (bin_id == TCON_DEMURA_LUT) {
+		strcpy(magic, "tcon_demura_lut");
+		offset = CRI_DATA_TCON_DEMURA_LUT_OFFSET;
+	} else if (bin_id == TCON_DEMURA_CRC) {
+		strcpy(magic, "tcon_demura_crc");
+		offset = CRI_DATA_TCON_DEMURA_CRC_OFFSET;
+	} else {
+		printf("[%s, %d] bad param, bin_id = %d\n", __FUNCTION__, __LINE__, bin_id);
+		return -1;
+	}
+
+	memset(&tcon_bin_head, 0x00, sizeof(tcon_bin_head));
+	ret = store_read_ops("cri_data", &tcon_bin_head, offset, (uint64_t)sizeof(tcon_bin_head));
+	if(0 != ret){
+		printf("[%s, %d] read tcon bin data failed, bin_id=%d\n", __FUNCTION__, __LINE__, bin_id);
+		return 0;
+	}
+
+	if(strcmp(tcon_bin_head.magic, magic)) {
+		printf("[%s, %d] no tcon bin data, bin_id=%d\n", __FUNCTION__, __LINE__, bin_id);
+		return 0;
+	}
+
+	printf("[%s, %d] magic=%s, checksum=0x%x, datasize=%d, bin_id=%d\n", __FUNCTION__, __LINE__,
+					tcon_bin_head.magic, tcon_bin_head.checksum, tcon_bin_head.datasize, bin_id);
+
+	return tcon_bin_head.datasize;
+}
 
 
 int serial_set_pin_port(unsigned long port_base)
@@ -1178,6 +1349,11 @@ static void update_led(void) {
 		send_to_led_pattern(led_val);/* send date to bl30 */
 		printf("reboot_mode = %s,set LED off,led_val=%d\n",rebootmode,led_val);
 	}
+	if(!strcmp(rebootmode,"recovery_quiescent")){
+		led_val = LED_STATUS_ON;
+		send_to_led_pattern(led_val);/* send date to bl30 */
+		printf("reboot_mode = %s,set LED off,led_val=%d\n",rebootmode,led_val);
+	}
 	if(!strcmp(rebootmode,"update")){
 		led_val = LED_STATUS_ON;
 		send_to_led_pattern(led_val);/* send date to bl30 */
@@ -1334,6 +1510,9 @@ static void amazon_ammo_config()
     setenv("ammo_pv",ammo_pv);
 }
 #endif
+
+extern char  hwid[10];
+#define MERIDIANC_HARDWARE_ID_HVT "1001"
 int board_late_init(void)
 {
 #if defined(CONFIG_IDME)
@@ -1347,6 +1526,10 @@ int board_late_init(void)
 	pri_hardware_id();
 	config_dev_board();
 #endif
+	if(strcmp(MERIDIANC_HARDWARE_ID_HVT, hwid) == 0) {
+		run_command("gpio set GPIODV_11",0);
+	}
+
 #ifdef CONFIG_CMD_WOL_POWER
 	/* HERE should read idme wol power config
 	DEFAULT is disable
@@ -1543,6 +1726,7 @@ int board_late_init(void)
 		printf("uboot outputMode change saveenv old:%s - new:%s\n",outputModePre,outputModeCur);
 		run_command("saveenv", 0);
 	}
+
 	return 0;
 }
 #endif
@@ -1641,6 +1825,7 @@ exit:
 #endif
 
 #ifdef CONFIG_MULTI_DTB
+#define HAZEL_SI2151_HARDWARE_ID "1111"
 int checkhw(char * name)
 {
 	char loc_name[64] = {0};
@@ -1674,8 +1859,12 @@ int checkhw(char * name)
 			case 0xB:
 				idme_get_var_external("oem_data", oem_data, sizeof(oem_data));
 				if (strstr(oem_data, "hazel-tm") != NULL) {
-					strcpy(loc_name, "tm2revb_ABC_32b\0");
+					strcpy(loc_name, "tm2revb_meridian_32b\0");
 					setenv("cpu_version", "rev_b");
+				} else if (strcmp(HAZEL_SI2151_HARDWARE_ID, hwid) == 0) {
+					/*63 is the maximum for loc_name */
+					strncpy(loc_name, "tm2revb_hazel_32b-si2151\0", 63);
+                                        setenv("cpu_version", "rev_b");
 				} else{
 					strcpy(loc_name, "tm2revb_hazel_32b-ntp8918\0");
 					setenv("cpu_version", "rev_b");

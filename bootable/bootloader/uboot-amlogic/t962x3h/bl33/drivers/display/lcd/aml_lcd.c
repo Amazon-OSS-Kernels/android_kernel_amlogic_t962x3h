@@ -218,7 +218,8 @@ static void lcd_power_ctrl(int status)
 			break;
 		}
 
-		if (power_step->type != LCD_POWER_TYPE_WAIT_GPIO) {
+		if (power_step->type != LCD_POWER_TYPE_WAIT_GPIO &&
+			power_step->type != LCD_POWER_TYPE_SWITCH_DURATION) {
 			if (power_step->delay > 0)
 				mdelay(power_step->delay);
 		}
@@ -282,6 +283,13 @@ static void lcd_backlight_enable(void)
 	aml_bl_power_ctrl(1, 1);
 }
 
+static void lcd_interface_bypass(struct lcd_config_s *pconf)
+{
+        if (pconf->lcd_basic.lcd_type == LCD_MLVDS ||
+            pconf->lcd_basic.lcd_type == LCD_P2P)
+                lcd_tcon_resv_mem_prepare(pconf);
+}
+
 static void lcd_module_enable(char *mode)
 {
 	unsigned int sync_duration;
@@ -311,6 +319,9 @@ static void lcd_module_enable(char *mode)
 		if (boot_ctrl.lcd_init_level == LCD_INIT_LEVEL_NORMAL) {
 			lcd_interface_on();
 			lcd_backlight_enable();
+		} else {
+			lcd_interface_bypass(pconf);
+			LCDPR("bypass interface for init_level %d\n", boot_ctrl.lcd_init_level);
 		}
 	}
 	if (!lcd_debug_test)
@@ -821,6 +832,15 @@ static void lcd_update_boot_ctrl_bootargs(void)
 	setenv("lcd_ctrl_quiescent", lcd_boot_ctrl);
 }
 
+static struct phy_config_s lcd_phy_cfg = {
+	.vswing = 0,
+	.vcm = 0,
+	.ref_bias = 0,
+	.odt = 0,
+	.mode = 0,
+	.flag = 0,
+};
+
 int lcd_probe(void)
 {
 	char *str;
@@ -861,6 +881,7 @@ int lcd_probe(void)
 
 	lcd_chip_detect();
 	lcd_config_bsp_init();
+	aml_lcd_driver.lcd_config->lcd_control.phy_cfg = &lcd_phy_cfg;
 	ret = lcd_config_probe();
 	if (ret)
 		return 0;

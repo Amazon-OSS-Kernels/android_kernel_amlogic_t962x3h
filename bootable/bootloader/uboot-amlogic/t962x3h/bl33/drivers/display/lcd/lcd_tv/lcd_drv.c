@@ -24,6 +24,27 @@
 #include "../aml_lcd_common.h"
 #include "lcd_tv.h"
 
+int check_model_name_pre_de_add_one_line(void)
+{
+	char model_name[128] = {0};
+	int ret;
+
+	ret = idme_get_var_external("model_name", model_name, sizeof(model_name));
+	if(0 != ret) {
+		LCDERR("[%s, %d] get model_name failed\n", __FUNCTION__, __LINE__);
+		return 0;
+	}
+
+	if (strstr(model_name, "/tvconfig/modelc/UHD_43D6140_T_") != NULL ||
+		strstr(model_name, "/tvconfig/modelc/UHD_65D6140_T_") != NULL ||
+		strstr(model_name, "/tvconfig/modelc/UHD_75D6140_T_") != NULL ||
+		strstr(model_name, "/tvconfig/model/UHD_65D6140_T_") != NULL ||
+		strstr(model_name, "/tvconfig/model/UHD_75D6140_T_") != NULL)
+		return 1;
+	else
+		return 0;
+}
+
 static int lcd_type_supported(struct lcd_config_s *pconf)
 {
 	int lcd_type = pconf->lcd_basic.lcd_type;
@@ -97,7 +118,7 @@ static void lcd_venc_set(struct lcd_config_s *pconf)
 {
 	unsigned int h_active, v_active;
 	unsigned int video_on_pixel, video_on_line;
-	unsigned int pre_de_vs = 0, pre_de_ve = 0, pre_de_hs = 0, pre_de_he = 0;
+	unsigned int pre_vde, pre_de_vs = 0, pre_de_ve = 0, pre_de_hs = 0, pre_de_he = 0;
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 
 	if (lcd_debug_print_flag)
@@ -127,13 +148,21 @@ static void lcd_venc_set(struct lcd_config_s *pconf)
 		case LCD_CHIP_TXHD:
 		case LCD_CHIP_TL1:
 		case LCD_CHIP_TM2:
-			pre_de_vs = video_on_line - 1 - 4;
-			pre_de_ve = video_on_line - 1;
+			if(check_model_name_pre_de_add_one_line()) {
+				pre_de_vs = video_on_line - 4;
+				pre_de_ve = video_on_line;
+			} else {
+				pre_vde = pconf->lcd_timing.pre_de_v ?
+					pconf->lcd_timing.pre_de_v : 5;
+				pre_de_vs = video_on_line - pre_vde;
+				pre_de_ve = pre_de_vs + 4;
+			}
 			pre_de_hs = video_on_pixel + PRE_DE_DELAY;
 			pre_de_he = h_active - 1 + pre_de_hs;
 			break;
 		default:
-			pre_de_vs = video_on_line - 8;
+			pre_vde = pconf->lcd_timing.pre_de_v ? pconf->lcd_timing.pre_de_v : 8;
+			pre_de_vs = video_on_line - pre_vde;
 			pre_de_ve = v_active + pre_de_vs;
 			pre_de_hs = video_on_pixel + PRE_DE_DELAY;
 			pre_de_he = h_active - 1 + pre_de_hs;

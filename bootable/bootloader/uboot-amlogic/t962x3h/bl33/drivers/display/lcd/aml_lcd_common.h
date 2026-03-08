@@ -39,7 +39,8 @@
 /* 20200927: add tcon support for T5 chip*/
 /* 20201019: optimize tcon axi reserved memory config and data crc32*/
 /* 20211009: support 59 & 47 frame rate for tv mode*/
-#define LCD_DRV_VERSION    "20211009"
+/* 20220629: add ini ver2 support and support phy lane contrl*/
+#define LCD_DRV_VERSION    "20220629"
 #define LCD_STATUS_IF_ON      (1 << 0)
 #define LCD_STATUS_ENCL_ON    (1 << 1)
 #define VPP_OUT_SATURATE            (1 << 0)
@@ -73,6 +74,8 @@ extern void lcd_timing_init_config(struct lcd_config_s *pconf);
 extern int lcd_vmode_change(struct lcd_config_s *pconf);
 
 /* lcd phy */
+unsigned int lcd_phy_vswing_level_to_value(struct aml_lcd_drv_s *pdrv, unsigned int level);
+unsigned int lcd_phy_preem_level_to_value(struct aml_lcd_drv_s *pdrv, unsigned int level);
 extern void lcd_lvds_phy_set(struct lcd_config_s *pconf, int status);
 extern void lcd_vbyone_phy_set(struct lcd_config_s *pconf, int status);
 extern void lcd_mlvds_phy_set(struct lcd_config_s *pconf, int status);
@@ -86,6 +89,7 @@ extern void lcd_tcon_info_print(void);
 extern int lcd_tcon_enable(struct lcd_config_s *pconf);
 extern void lcd_tcon_disable(void);
 extern int lcd_tcon_probe(char *dt_addr, struct aml_lcd_drv_s *lcd_drv, int load_id);
+int lcd_tcon_resv_mem_prepare(struct lcd_config_s *pconf);
 
 /* lcd gpio */
 extern int aml_lcd_gpio_name_map_num(const char *name);

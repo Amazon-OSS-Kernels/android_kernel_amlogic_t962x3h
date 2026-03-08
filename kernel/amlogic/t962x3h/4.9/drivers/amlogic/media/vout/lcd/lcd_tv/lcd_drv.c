@@ -53,6 +53,7 @@ static int lcd_vx1_intr_request;
 #define VX1_HPLL_INTERVAL (HZ)
 static struct timer_list vx1_hpll_timer;
 
+extern int check_model_name_pre_de_add_one_line(void);
 static int lcd_type_supported(struct lcd_config_s *pconf)
 {
 	int lcd_type = pconf->lcd_basic.lcd_type;
@@ -128,7 +129,7 @@ static void lcd_venc_set(struct lcd_config_s *pconf)
 {
 	unsigned int h_active, v_active;
 	unsigned int video_on_pixel, video_on_line;
-	unsigned int pre_de_vs = 0, pre_de_ve = 0, pre_de_hs = 0, pre_de_he = 0;
+	unsigned int pre_vde, pre_de_vs = 0, pre_de_ve = 0, pre_de_hs = 0, pre_de_he = 0;
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 
 	if (lcd_debug_print_flag)
@@ -161,13 +162,21 @@ static void lcd_venc_set(struct lcd_config_s *pconf)
 		switch (lcd_drv->data->chip_type) {
 		case LCD_CHIP_TL1:
 		case LCD_CHIP_TM2:
-			pre_de_vs = video_on_line - 1 - 4;
-			pre_de_ve = video_on_line - 1;
+			if (check_model_name_pre_de_add_one_line()) {
+				pre_de_vs = video_on_line - 4;
+				pre_de_ve = video_on_line;
+			} else {
+				pre_vde = pconf->lcd_timing.pre_de_v ?
+					pconf->lcd_timing.pre_de_v : 5;
+				pre_de_vs = video_on_line - pre_vde;
+				pre_de_ve = pre_de_vs + 4;
+			}
 			pre_de_hs = video_on_pixel + PRE_DE_DELAY;
 			pre_de_he = h_active - 1 + pre_de_hs;
 			break;
 		default:
-			pre_de_vs = video_on_line - 8;
+			pre_vde = pconf->lcd_timing.pre_de_v ? pconf->lcd_timing.pre_de_v : 8;
+			pre_de_vs = video_on_line - pre_vde;
 			pre_de_ve = v_active + pre_de_vs;
 			pre_de_hs = video_on_pixel + PRE_DE_DELAY;
 			pre_de_he = h_active - 1 + pre_de_hs;

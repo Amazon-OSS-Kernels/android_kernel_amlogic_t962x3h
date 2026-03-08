@@ -28,6 +28,8 @@
 #include "lcd_common.h"
 #include "lcd_reg.h"
 #include "lcd_tcon.h"
+#include <linux/amlogic/boardinfo.h>
+
 
 static void lcd_tcon_core_reg_pre_od(struct lcd_tcon_config_s *tcon_conf,
 				     struct tcon_mem_map_table_s *mm_table)
@@ -250,7 +252,29 @@ static void lcd_tcon_vac_set_tl1(unsigned int demura_valid)
 		LCDPR("%s: write vac_ramt3 ok\n", __func__);
 	for (i = 0; i < ((len >> 1) * 6); i++)
 		lcd_tcon_read(0x2900 + i);
-
+	if (isMeridianc() || isMeridian() || isHazelQ()) {
+	lcd_tcon_write(0x2801, 0x0f000870); /* vac_size */
+	lcd_tcon_write(0x2802, (0x58e00d00 | (set2 & 0xff)));
+	lcd_tcon_write(0x2803, 0x80400058);
+	lcd_tcon_write(0x2804, 0x58804000);
+	lcd_tcon_write(0x2805, 0x80400000);
+	lcd_tcon_write(0x2806, 0x64d0a032);
+	lcd_tcon_write(0x2807, 0x4c08a864);
+	lcd_tcon_write(0x2808, 0x1020080c);
+	lcd_tcon_write(0x2809, 0x18438100);
+	lcd_tcon_write(0x280a, 0xe0200004);
+	lcd_tcon_write(0x280b, 0x73574ab7);
+	lcd_tcon_write(0x280c, 0x91804045);
+	lcd_tcon_write(0x280d, 0x914c8f4f);
+	lcd_tcon_write(0x280e, 0xa63e44d6);
+	lcd_tcon_write(0x280f, 0xbb2bb15a);
+	lcd_tcon_write(0x2810, 0x8f17829a);
+	lcd_tcon_write(0x2811, 0x79797800);
+	lcd_tcon_write(0x2812, 0x04640708);
+	lcd_tcon_write(0x2813, 0x4b14b04a);
+	lcd_tcon_write(0x2814, 0xa881c8a1);
+	lcd_tcon_write(0x2815, 0x0);
+	} else{
 	lcd_tcon_write(0x2801, 0x0f000870); /* vac_size */
 	lcd_tcon_write(0x2802, (0x58e00d00 | (set2 & 0xff)));
 	lcd_tcon_write(0x2803, 0x80400058);
@@ -272,6 +296,7 @@ static void lcd_tcon_vac_set_tl1(unsigned int demura_valid)
 	lcd_tcon_write(0x2813, 0x4b14b08a);
 	lcd_tcon_write(0x2814, 0x4004b12c);
 	lcd_tcon_write(0x2815, 0x0);
+	}
 	/*vac_cntl,always read*/
 	lcd_tcon_write(0x2800, 0x381f);
 

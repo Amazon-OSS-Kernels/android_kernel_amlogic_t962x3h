@@ -1764,6 +1764,10 @@ static ssize_t store_pcrscr(struct class *class,
 	if (r != 0)
 		return -EINVAL;
 
+	if (tsync_get_mode() == TSYNC_MODE_PCRMASTER)
+		tsync_dbg(LOG_DEBUG, "%s: pcrpts %x -> %x, diff %d ms\n",
+			__func__, timestamp_pcrscr_get(), pts,
+			(int)(timestamp_pcrscr_get() - pts) / 90);
 	timestamp_pcrscr_set(pts);
 	set_pts_realign();
 
@@ -2200,6 +2204,10 @@ static ssize_t store_latency(struct class *class,
 	r = kstrtoint(buf, 0, &latency);
 	if (r != 0)
 		return -EINVAL;
+	if (tsync_get_mode() == TSYNC_MODE_PCRMASTER)
+		tsync_dbg(LOG_DEBUG, "%s: latency %x -> %x, diff %d ms\n",
+			__func__, timestamp_get_pcrlatency(), latency,
+			(int)(timestamp_get_pcrlatency() - latency) / 90);
 	timestamp_set_pcrlatency(latency);
 	return size;
 }

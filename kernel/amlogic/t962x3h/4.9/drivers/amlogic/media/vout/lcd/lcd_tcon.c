@@ -51,6 +51,26 @@ static struct delayed_work lcd_tcon_delayed_work;
 static struct lcd_tcon_local_cfg_s tcon_local_cfg;
 
 static int lcd_tcon_od_sta;
+static int check_model_name_flag;
+
+
+extern int idme_get_model_name(char *model_name);
+int check_model_name_pre_de_add_one_line(void)
+{
+	char model_name[128] = {0};
+
+	idme_get_model_name(model_name);
+	if (strstr(model_name, "/tvconfig/modelc/UHD_43D6140_T_") != NULL ||
+		strstr(model_name, "/tvconfig/modelc/UHD_65D6140_T_") != NULL ||
+		strstr(model_name, "/tvconfig/modelc/UHD_75D6140_T_") != NULL ||
+		strstr(model_name, "/tvconfig/model/UHD_65D6140_T_") != NULL ||
+		strstr(model_name, "/tvconfig/model/UHD_75D6140_T_") != NULL)
+		check_model_name_flag = 1;
+	else
+		check_model_name_flag = 0;
+
+	return check_model_name_flag;
+}
 
 /* **********************************
  * tcon common function
@@ -657,6 +677,35 @@ int lcd_tcon_od_get(void)
 	return ret;
 }
 
+static int lcd_tcon_od_onoff_set(int flag)
+{
+	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
+	int ret;
+
+	ret = lcd_tcon_valid_check();
+	if (ret)
+		return -1;
+
+	if (flag) {
+		if (tcon_rmem.flag == 0) {
+			LCDERR("%s: invalid memory, disable od function\n",
+				__func__);
+			return -1;
+		}
+	}
+
+	if (!(lcd_drv->lcd_status & LCD_STATUS_IF_ON))
+		return -1;
+
+	if (flag) {
+		lcd_tcon_setb_byte(0x247, 1, 0, 1);
+	} else {
+		lcd_tcon_setb_byte(0x247, 0, 0, 1);
+	}
+
+	return 0;
+}
+
 int lcd_tcon_od_demo_set(int flag)
 {
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
@@ -721,8 +770,13 @@ static int lcd_tcon_od_on_off_notifier(struct notifier_block *nb, unsigned long 
 	//lcd_tcon_od_set(val);
 	if ((lcd_tcon_od_sta >= 0) && (val == 0))
 		lcd_tcon_od_sta = TCON_OD_OFF;
-	else if ((lcd_tcon_od_sta <= 0) && (val == 1))
-		lcd_tcon_od_sta = TCON_OD_DDRIF_ON;
+	else if ((lcd_tcon_od_sta <= 0) && (val == 1)) {
+		if (check_model_name_flag) {
+			lcd_tcon_od_sta = TCON_OD_ON;
+		} else {
+			lcd_tcon_od_sta = TCON_OD_DDRIF_ON;
+		}
+	}
 
 	LCDPR_ISR("%s: od %s\n", __func__, val == 1 ? "on" : "off");
 
@@ -735,34 +789,58 @@ static struct notifier_block lcd_tcon_od_on_off_nb = {
 
 void lcd_tcon_od_on_off_state_machine_update(void)
 {
-	struct aml_lcd_drv_s *pdrv = aml_lcd_get_driver();
-	if (lcd_tcon_is_od_on_keeping_state()) {
-		switch (lcd_tcon_od_sta) {
-		case TCON_OD_DDRIF_ON:
-			lcd_tcon_od_set(1);
-			if (pdrv->data->chip_type <= LCD_CHIP_TM2)
-				lcd_tcon_od_sta = TCON_OD_FINISHED;
-			else
+	if (check_model_name_flag) {
+		if (lcd_tcon_is_od_on_keeping_state()) {
+			switch (lcd_tcon_od_sta) {
+			case TCON_OD_ON:
+				lcd_tcon_od_onoff_set(1);
 				lcd_tcon_od_sta = TCON_OD_KEEP;
-			LCDPR_ISR("%s: od ddrif on\n", __func__);
-			break;
-		case TCON_OD_KEEP:
-			lcd_tcon_od_sta = TCON_OD_DEMO_OFF;
-			LCDPR_ISR("%s: od on keeping\n", __func__);
-			break;
-		case TCON_OD_DEMO_OFF:
-			lcd_tcon_od_demo_set(0);
-			lcd_tcon_od_sta = TCON_OD_FINISHED;
-			LCDPR_ISR("%s: od demo close, od on finished\n", __func__);
-			break;
-		case TCON_OD_OFF:
-			lcd_tcon_od_sta = TCON_OD_FINISHED;
-			lcd_tcon_od_demo_set(1);
-			lcd_tcon_od_set(0);
-			LCDPR_ISR("%s: od off finished\n", __func__);
-			break;
-		default:
-			break;
+				LCDPR_ISR("%s: od on\n", __func__);
+				break;
+			case TCON_OD_OFF:
+				lcd_tcon_od_onoff_set(0);
+				lcd_tcon_od_sta = TCON_OD_KEEP;
+				LCDPR_ISR("%s: od off\n", __func__);
+				break;
+			case TCON_OD_KEEP:
+				lcd_tcon_od_sta = TCON_OD_FINISHED;
+				LCDPR_ISR("%s: od finished\n", __func__);
+				break;
+			default:
+				break;
+			}
+		}
+	} else {
+		struct aml_lcd_drv_s *pdrv = aml_lcd_get_driver();
+
+		if (lcd_tcon_is_od_on_keeping_state()) {
+			switch (lcd_tcon_od_sta) {
+			case TCON_OD_DDRIF_ON:
+				lcd_tcon_od_set(1);
+				if (pdrv->data->chip_type <= LCD_CHIP_TM2)
+					lcd_tcon_od_sta = TCON_OD_FINISHED;
+				else
+					lcd_tcon_od_sta = TCON_OD_KEEP;
+				LCDPR_ISR("%s: od ddrif on\n", __func__);
+				break;
+			case TCON_OD_KEEP:
+				lcd_tcon_od_sta = TCON_OD_DEMO_OFF;
+				LCDPR_ISR("%s: od on keeping\n", __func__);
+				break;
+			case TCON_OD_DEMO_OFF:
+				lcd_tcon_od_demo_set(0);
+				lcd_tcon_od_sta = TCON_OD_FINISHED;
+				LCDPR_ISR("%s: od demo close, od on finished\n", __func__);
+				break;
+			case TCON_OD_OFF:
+				lcd_tcon_od_sta = TCON_OD_FINISHED;
+				lcd_tcon_od_demo_set(1);
+				lcd_tcon_od_set(0);
+				LCDPR_ISR("%s: od off finished\n", __func__);
+				break;
+			default:
+				break;
+			}
 		}
 	}
 }
@@ -1769,6 +1847,8 @@ static int lcd_tcon_get_config(struct aml_lcd_drv_s *lcd_drv)
 	if (tcon_mm_table.tcon_data_flag == 0)
 		lcd_tcon_data_load();
 	lcd_drv->tcon_status = tcon_mm_table.valid_flag;
+
+	check_model_name_pre_de_add_one_line();
 
 	lcd_tcon_intr_init(lcd_drv);
 

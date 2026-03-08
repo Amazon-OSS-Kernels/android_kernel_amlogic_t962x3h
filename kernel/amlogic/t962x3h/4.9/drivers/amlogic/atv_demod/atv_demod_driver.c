@@ -44,7 +44,7 @@
 
 #include "atvdemod_func.h"
 #include "atvauddemod_func.h"
-
+#include <linux/amlogic/boardinfo.h>
 
 /********************************CODE CHANGE LIST*****************************/
 /* Date --- Version --- Note *************************************************/
@@ -510,7 +510,7 @@ static void aml_atvdemod_dt_parse(struct aml_atvdemod_device *pdev)
 
 	/* agc pin mux */
 	ret = of_property_read_string(node, "pinctrl-names", &pdev->pin_name);
-	if (ret) {
+	if (ret || isMeridian()) {
 		pdev->agc_pin = NULL;
 		pr_err("can't find agc pinmux.\n");
 	} else {

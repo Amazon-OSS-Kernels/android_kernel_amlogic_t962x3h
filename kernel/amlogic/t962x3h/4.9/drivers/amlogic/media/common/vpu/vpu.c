@@ -30,6 +30,9 @@
 #ifdef CONFIG_AMLOGIC_POWER
 #include <linux/amlogic/power_domain.h>
 #endif
+#ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
+#include <linux/amlogic/pm.h>
+#endif
 #include <linux/amlogic/media/vpu/vpu.h>
 #include "vpu_reg.h"
 #include "vpu.h"
@@ -53,6 +56,8 @@ int vpu_debug_print_flag;
 static spinlock_t vpu_mem_lock;
 static spinlock_t vpu_clk_gate_lock;
 static DEFINE_MUTEX(vpu_clk_mutex);
+static u32 vpu_clk_level_saved;
+static u32 vapb_clk_level_saved;
 
 struct vpu_conf_s vpu_conf = {
 	.data = NULL,
@@ -66,9 +71,31 @@ struct vpu_conf_s vpu_conf = {
 	.vpu_clk0 = NULL,
 	.vpu_clk1 = NULL,
 	.vpu_clk = NULL,
+	.vapb_clk = NULL,
 
 	.clk_vmod = NULL,
 };
+
+static struct vpu_clk_s vpu_clk_suspend = {
+	/* frequency   clk_mux       div */
+	50000000,    FCLK_DIV5,      7
+};
+
+static bool is_hazel_75;
+
+extern int idme_get_model_name(char *model_name);
+bool check_model_name(void)
+{
+	char model_name[128] = {0};
+
+	idme_get_model_name(model_name);
+	if ((strstr(model_name, "/tvconfig/75C350LU_0003/") != NULL) ||
+		(strstr(model_name, "/tvconfig/65A51HUF/") != NULL) ||
+		(strstr(model_name, "/tvconfig/75A51HUF/") != NULL))
+		return true;
+	else
+		return false;
+}
 
 int vpu_chip_valid_check(void)
 {
@@ -78,6 +105,65 @@ int vpu_chip_valid_check(void)
 		VPUERR("invalid VPU in current chip\n");
 		ret = -1;
 	}
+	return ret;
+}
+
+static int vapb_clk_switch(unsigned int flag)
+{
+	unsigned int clk;
+	int ret = 0;
+
+	ret = vpu_chip_valid_check();
+	if (ret)
+		return -1;
+
+	if ((IS_ERR_OR_NULL(vpu_conf.vapb_clk0)) ||
+		(IS_ERR_OR_NULL(vpu_conf.vapb_clk1)) ||
+		(IS_ERR_OR_NULL(vpu_conf.vapb_clk))) {
+		VPUERR("%s: vapb_clk\n", __func__);
+		return -1;
+	}
+
+	if (flag) {
+		/* step 1:  switch to 2nd vpu clk patch */
+		clk = vapb_clk_level_saved;
+		ret = clk_set_rate(vpu_conf.vapb_clk1, clk);
+		if (ret)
+			return ret;
+		clk_set_parent(vpu_conf.vapb_clk, vpu_conf.vapb_clk1);
+		usleep_range(10, 15);
+		/* step 2:  adjust 1st vpu clk frequency */
+		clk = vapb_clk_level_saved;
+		ret = clk_set_rate(vpu_conf.vapb_clk0, clk);
+		if (ret)
+			return ret;
+		usleep_range(20, 25);
+		/* step 3:  switch back to 1st vpu clk patch */
+		clk_set_parent(vpu_conf.vapb_clk, vpu_conf.vapb_clk0);
+
+		clk = clk_get_rate(vpu_conf.vapb_clk);
+	} else {
+		/* step 1:  switch to 2nd vpu clk patch */
+		clk = vapb_clk_level_saved;
+		ret = clk_set_rate(vpu_conf.vapb_clk1, clk);
+		if (ret)
+			return ret;
+		clk_set_parent(vpu_conf.vapb_clk, vpu_conf.vapb_clk1);
+		usleep_range(10, 15);
+		/* step 2:  adjust 1st vpu clk frequency */
+		clk = 50000000;
+		ret = clk_set_rate(vpu_conf.vapb_clk0, clk);
+		if (ret)
+			return ret;
+		usleep_range(20, 25);
+		/* step 3:  switch back to 1st vpu clk patch */
+		clk_set_parent(vpu_conf.vapb_clk, vpu_conf.vapb_clk0);
+
+		clk = clk_get_rate(vpu_conf.vapb_clk);
+	}
+	VPUPR("switch vapb_clk: %uHz(0x%x)\n",
+		clk, (vpu_hiu_read(vpu_conf.data->vapb_clk_reg)));
+
 	return ret;
 }
 
@@ -1309,10 +1395,24 @@ static int remove_vpu_debug_class(void)
 	return 0;
 }
 /* ********************************************************* */
-
 #ifdef CONFIG_PM
 static int vpu_suspend(struct platform_device *pdev, pm_message_t state)
 {
+	if (is_hazel_75) {
+		unsigned int clk;
+
+		if (!vpu_conf.data)
+			return 0;
+		if (vpu_conf.data->chip_type >= VPU_CHIP_TM2) {
+			/* down vpu clk when suspend */
+			vpu_clk_level_saved = vpu_conf.clk_level;
+			vapb_clk_level_saved = clk_get_rate(vpu_conf.vapb_clk);
+
+			clk = vpu_clk_suspend.freq;
+			vapb_clk_switch(0);
+			set_vpu_clk(clk);
+		}
+	}
 	VPUPR("suspend clk: %uHz(0x%x)\n",
 		get_vpu_clk(), (vpu_hiu_read(vpu_conf.data->vpu_clk_reg)));
 	return 0;
@@ -1320,7 +1420,25 @@ static int vpu_suspend(struct platform_device *pdev, pm_message_t state)
 
 static int vpu_resume(struct platform_device *pdev)
 {
-	set_vpu_clk(vpu_conf.clk_level);
+	if (is_hazel_75) {
+		unsigned int clk;
+
+		if (!vpu_conf.data)
+			return 0;
+
+		if (vpu_conf.data->chip_type >= VPU_CHIP_TM2) {
+			clk = vpu_clk_level_saved;
+
+			vapb_clk_switch(1);
+			set_vpu_clk(clk);
+		} else {
+			mutex_lock(&vpu_clk_mutex);
+			set_vpu_clk(vpu_conf.clk_level);
+			mutex_unlock(&vpu_clk_mutex);
+		}
+	} else {
+		set_vpu_clk(vpu_conf.clk_level);
+	}
 	VPUPR("resume clk: %uHz(0x%x)\n",
 		get_vpu_clk(), (vpu_hiu_read(vpu_conf.data->vpu_clk_reg)));
 	return 0;
@@ -1358,14 +1476,30 @@ static int get_vpu_config(struct platform_device *pdev)
 
 static void vpu_clktree_init(struct device *dev)
 {
-	struct clk *clk_vapb, *clk_vpu_intr;
+	struct clk *clk_vpu_intr;
+	int ret = 0;
 
 	/* init & enable vapb_clk */
-	clk_vapb = devm_clk_get(dev, "vapb_clk");
-	if (IS_ERR_OR_NULL(clk_vapb))
-		VPUERR("%s: vapb_clk\n", __func__);
-	else
-		clk_prepare_enable(clk_vapb);
+	vpu_conf.vapb_clk0 = devm_clk_get(dev, "vapb_clk0");
+	vpu_conf.vapb_clk1 = devm_clk_get(dev, "vapb_clk1");
+	vpu_conf.vapb_clk = devm_clk_get(dev, "vapb_clk");
+	if ((IS_ERR_OR_NULL(vpu_conf.vapb_clk0)) ||
+		(IS_ERR_OR_NULL(vpu_conf.vapb_clk1)) ||
+		(IS_ERR_OR_NULL(vpu_conf.vapb_clk))) {
+		vpu_conf.vapb_clk = devm_clk_get(dev, "vapb_clk");
+		if (IS_ERR_OR_NULL(vpu_conf.vapb_clk))
+			VPUERR("%s: vapb_clk\n", __func__);
+		else
+			clk_prepare_enable(vpu_conf.vapb_clk);
+	} else {
+		ret = clk_set_parent(vpu_conf.vapb_clk, vpu_conf.vapb_clk0);
+		if (ret)
+			VPUERR("%s: %d clk_set_parent error\n", __func__, __LINE__);
+		clk_prepare_enable(vpu_conf.vapb_clk);
+		ret = clk_set_rate(vpu_conf.vapb_clk1, 50000000);
+		if (ret)
+			VPUERR("%s: clk_set_rate error\n", __func__);
+	}
 
 	clk_vpu_intr = devm_clk_get(dev, "vpu_intr_gate");
 	if (IS_ERR_OR_NULL(clk_vpu_intr))
@@ -2119,6 +2253,7 @@ static int vpu_probe(struct platform_device *pdev)
 	if (ret)
 		vpu_power_init();
 	creat_vpu_debug_class();
+	is_hazel_75 = check_model_name();
 
 	VPUPR("%s OK\n", __func__);
 	return 0;

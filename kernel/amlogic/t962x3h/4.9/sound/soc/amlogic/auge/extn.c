@@ -57,6 +57,9 @@
 #define MAX_INT    0x7ffffff
 
 #define MAX_AUDIO_EDID_LENGTH 38
+#define TYPE_TRUEHD 5
+#define PC_OF_TRUEHD 0x16
+#define HBR_PACKET_TYPE 4
 
 /*
  * TXLX: hdmirx arc from spdif
@@ -839,11 +842,18 @@ static int hdmiin_check_audio_type(struct extn *p_extn)
 {
 	int total_num = sizeof(type_texts)/sizeof(struct sppdif_audio_info);
 	int pc = frhdmirx_get_chan_status_pc(p_extn->hdmirx_mode);
-	int audio_type = 0;
+	int audio_type = 0, cur_packet_type;
 	int i;
 
-	if (!p_extn->nonpcm_flag && p_extn->hdmirx_mode)
-		return audio_type;
+	cur_packet_type = aml_get_cur_hdmi_packet_type();
+	if (!p_extn->nonpcm_flag && p_extn->hdmirx_mode) {
+		if ((pc == PC_OF_TRUEHD) &&
+			(cur_packet_type == HBR_PACKET_TYPE))
+			return TYPE_TRUEHD;
+		else
+			return audio_type;
+	}
+
 
 	for (i = 0; i < total_num; i++) {
 		if (pc == type_texts[i].pc) {

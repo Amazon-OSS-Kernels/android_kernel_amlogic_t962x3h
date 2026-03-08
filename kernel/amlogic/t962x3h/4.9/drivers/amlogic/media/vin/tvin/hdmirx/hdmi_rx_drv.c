@@ -1058,8 +1058,13 @@ void hdmirx_get_repetition_info(struct tvin_sig_property_s *prop)
  */
 void hdmirx_get_latency_info(struct tvin_sig_property_s *prop)
 {
-	prop->latency.allm_mode =
-		rx.vs_info_details.allm_mode;
+	//dv sink-led not allm mode
+	if (prop->dolby_vision && !prop->low_latency &&
+	    prop->emp_data.size == 0 && prop->color_format == TVIN_RGB444)
+		prop->latency.allm_mode = 0;
+	else
+		prop->latency.allm_mode =
+			rx.vs_info_details.allm_mode;
 	prop->latency.it_content = rx.cur.it_content;
 	prop->latency.cn_type = rx.cur.cn_type;
 }
@@ -1191,8 +1196,8 @@ void hdmirx_get_sig_property(struct tvin_frontend_s *fe,
 	hdmirx_set_timing_info(prop);
 	hdmirx_get_hdr_info(prop);
 	hdmirx_get_vsi_info(prop);
-	hdmirx_get_latency_info(prop);
 	hdmirx_get_emp_info(prop);
+	hdmirx_get_latency_info(prop);
 	hdmirx_get_active_aspect_ratio(prop);
 	hdmirx_get_hdcp_sts(prop);
 	prop->skip_vf_num = vdin_drop_frame_cnt;
@@ -1653,7 +1658,11 @@ static ssize_t hdmirx_debug_show(struct device *dev,
 	struct device_attribute *attr,
 	char *buf)
 {
-	return sprintf(buf, "%d\n", rx.cur.vactive);
+	if (rx.open_fg && rx.state == FSM_SIG_READY) {
+		return sprintf(buf, "%d\n", rx.cur.vactive);
+	} else {
+		return sprintf(buf, "%d\n", 0);
+	}
 }
 
 static ssize_t hdmirx_debug_store(struct device *dev,
@@ -2109,7 +2118,7 @@ static DEVICE_ATTR(audio_blk, 0644, audio_blk_show, audio_blk_store);
 static DEVICE_ATTR(scan_mode, 0444, scan_mode_show, NULL);
 static DEVICE_ATTR(hdcp14_onoff, 0444, hdcp14_onoff_show, NULL);
 static DEVICE_ATTR(hdcp22_onoff, 0444, hdcp22_onoff_show, NULL);
-static DEVICE_ATTR(game_dev, 0644, hdmirx_game_dev_show, NULL);
+static DEVICE_ATTR(game_dev, 0444, hdmirx_game_dev_show, NULL);
 
 static int hdmirx_add_cdev(struct cdev *cdevp,
 		const struct file_operations *fops,

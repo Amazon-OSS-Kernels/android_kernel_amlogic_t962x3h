@@ -448,6 +448,7 @@ error_exit:
 	return ret;
 }
 
+#if 0
 static ssize_t userdata_show(struct class *cla,
 	struct class_attribute *attr, char *buf)
 {
@@ -535,6 +536,7 @@ static ssize_t userdata_write(struct class *cla,
 	kfree(op);
 	return count;
 }
+#endif
 #endif
 
 static ssize_t amlogic_set_store(struct class *cla,
@@ -698,6 +700,7 @@ static ssize_t show_usb_password_protect(struct class *class,
 
 static struct class_attribute efuse_class_attrs[] = {
 
+#if 0
 	#ifndef EFUSE_READ_ONLY
 	/*make the efuse can not be write through sysfs */
 	__ATTR(userdata, 0700, userdata_show, userdata_write),
@@ -706,6 +709,7 @@ static struct class_attribute efuse_class_attrs[] = {
 	__ATTR_RO(userdata),
 
 	#endif
+#endif
 
 	__ATTR(mac, 0700, show_mac, store_mac),
 

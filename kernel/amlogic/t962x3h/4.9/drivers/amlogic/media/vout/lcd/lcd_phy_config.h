@@ -92,4 +92,25 @@ static unsigned int p2p_low_common_phy_preem_tl1[] = {
 	0xff0bff0b,
 };
 
+static unsigned int lvds_vx1_p2p_phy_ch_tl1 = 0x00020002;
+static unsigned int lvds_vx1_p2p_phy_preem_tl1_V2[] = {
+	0x06,
+	0x26,
+	0x46,
+	0x66,
+	0x86,
+	0xa6,
+	0xf6,
+};
+
+static unsigned int p2p_low_common_phy_ch_tl1 = 0x000b000b;
+static unsigned int p2p_low_common_phy_preem_tl1_V2[] = {
+	0x07,
+	0x17,
+	0x37,
+	0x77,
+	0xf7,
+	0xff,
+};
+
 #endif

@@ -26,6 +26,7 @@
 #define TCON_INTR_MASKN_VAL    0x0  /* default mask all */
 
 #define TCON_OD_FINISHED 0
+#define TCON_OD_ON       1
 #define TCON_OD_DDRIF_ON 1
 #define TCON_OD_KEEP     2
 #define TCON_OD_DEMO_OFF 3

@@ -397,6 +397,18 @@ int of_amlsd_init(struct amlsd_platform *pdata)
 		}
 	}
 
+	if (pdata->gpio_trigger12) {
+		ret = gpio_request_one(pdata->gpio_trigger12,
+				GPIOF_OUT_INIT_HIGH, MODULE_NAME);
+		CHECK_RET(ret);
+	}
+
+	if (pdata->gpio_trigger13) {
+		ret = gpio_request_one(pdata->gpio_trigger13,
+				GPIOF_OUT_INIT_HIGH, MODULE_NAME);
+		CHECK_RET(ret);
+	}
+
 	/* if(pdata->port == MESON_SDIO_PORT_A) */
 	/* wifi_setup_dt(); */
 	return 0;

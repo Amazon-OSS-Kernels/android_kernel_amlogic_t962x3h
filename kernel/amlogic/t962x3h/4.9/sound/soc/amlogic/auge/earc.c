@@ -1877,13 +1877,19 @@ static void tx_falling_edge_and_mute_work_func(struct work_struct *p_work)
 	 * keep hdp low for 700ms, so 700ms + 800ms = 1500ms
 	 */
 	msleep(1500);
-	if (p_earc->tx_dmac_clk_on &&
-	    earctx_cmdc_get_attended_type(p_earc->tx_cmdc_map) == ATNDTYP_EARC) {
-		earctx_dmac_mute(p_earc->tx_dmac_map, true);
-		p_earc->tx_falling_edge_flag = false;
-		earctx_falling_edge_enable(p_earc->tx_dmac_map, true);
-		msleep(2000); /* mute 2s by checking sony TV signal */
-		earctx_dmac_mute(p_earc->tx_dmac_map, false);
+	p_earc->tx_falling_edge_flag = false;
+	if (p_earc->tx_dmac_clk_on) {
+		enum attend_type type =
+			earctx_cmdc_get_attended_type(p_earc->tx_cmdc_map);
+
+		if (type == ATNDTYP_EARC) {
+			earctx_dmac_mute(p_earc->tx_dmac_map, true);
+			earctx_falling_edge_enable(p_earc->tx_dmac_map, true);
+			msleep(2000); /* mute 2s by checking sony TV signal */
+			earctx_dmac_mute(p_earc->tx_dmac_map, false);
+		} else if (type == ATNDTYP_ARC) {
+			earctx_falling_edge_enable(p_earc->tx_dmac_map, true);
+		}
 	}
 }
 

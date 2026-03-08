@@ -22,7 +22,7 @@
 #include <linux/amlogic/cpu_version.h>
 
 #define KERNEL_4_9_EN		1
-#define DTVDEMOD_VER	"2021/24/Jun: atsc co-channel inteference"
+#define DTVDEMOD_VER	"2023.04.07: optimize 8VSB CN"
 #define DEMOD_DEVICE_NAME  "dtvdemod"
 
 #define THRD_TUNER_STRENTH_ATSC (-87)
@@ -35,6 +35,15 @@
 #define TIMEOUT_DVBT		3000
 #define TIMEOUT_DVBS		2000
 #define TIMEOUT_DVBC		3000
+
+enum DEMOD_TUNER_IF {
+	DEMOD_4M_IF = 4000,
+	DEMOD_4_57M_IF = 4570,
+	DEMOD_5M_IF = 5000,
+	DEMOD_5_5M_IF = 5500,
+	DEMOD_6M_IF = 6000,
+	DEMOD_36_13M_IF = 36130,
+};
 
 enum Gxtv_Demod_Tuner_If {
 	SI2176_5M_IF = 5,
@@ -377,7 +386,7 @@ void aml_dtv_demode_isr_en(struct amldtvdemod_device_s *devp, u32 en);
 void cci_run_new(struct amldtvdemod_device_s *devp);
 void atsc_reset_new(void);
 unsigned int cfo_run_new(void);
-void set_cr_ck_rate_new(void);
+void set_cr_ck_rate_new(struct amldtvdemod_device_s *devp);
 unsigned int demod_is_t5d_cpu(struct amldtvdemod_device_s *devp);
 int dtmb_information(struct seq_file *seq);
 #endif

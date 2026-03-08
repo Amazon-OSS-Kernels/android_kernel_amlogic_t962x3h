@@ -36,6 +36,7 @@
 #include <linux/of_gpio.h>
 #include <linux/amlogic/media/frame_provider/tvin/tvin.h>
 #include <linux/amlogic/media/sound/hdmi_earc.h>
+#include <linux/amlogic/boardinfo.h>
 
 /* Local include */
 #include "hdmi_rx_repeater.h"
@@ -71,6 +72,9 @@ static int hpd_wait_max = 40;
 
 static int sig_unstable_cnt;
 static int sig_unstable_max = 20;
+static int repeat_err_cnt = 0;
+static int colordepth_err_cnt = 0;
+static int avi_err_cnt_max = 5;
 
 bool vic_check_en;
 bool dvi_check_en;
@@ -844,6 +848,18 @@ static const struct freq_ref_s freq_ref[] = {
 	{0, 0,	0,	720,	483,	HDMI_480p60},
 };
 
+bool rx_is_repeat_err(void)
+{
+	if((rx.cur.repeat > 3  && rx.phy.cable_clk < LOW_BANDWIDTH_CLK) ||
+		(rx.cur.repeat > 0  && rx.phy.cable_clk > LOW_BANDWIDTH_CLK)){
+
+		if (log_level & VIDEO_LOG)
+			rx_pr("repeatition abnormal \n");
+		return true;
+	}
+	return false;
+}
+
 static bool fmt_vic_abnormal(void)
 {
 	/* if format is unknown or unsupported after
@@ -854,13 +870,6 @@ static bool fmt_vic_abnormal(void)
 		(rx.pre.sw_vic == HDMI_UNSUPPORT)) {
 		if (log_level & VIDEO_LOG)
 			rx_pr("fmt_vic_abnormal\n");
-		return true;
-	} else if ((rx.pre.sw_vic >= HDMI_VESA_OFFSET) &&
-		   (rx.pre.sw_vic < HDMI_UNSUPPORT) &&
-		   (rx.pre.repeat != 0)) {
-		/* no pixel repeatition for VESA mode */
-		if (log_level & VIDEO_LOG)
-			rx_pr("repeatition abnormal for vesa\n");
 		return true;
 	}
 	return false;
@@ -1189,6 +1198,15 @@ bool rx_is_nosig(void)
 	return rx.no_signal;
 }
 
+bool rx_is_pkt_err(void)
+{
+	if(rx.chip_id <= CHIP_ID_T5D && (repeat_err_cnt >= avi_err_cnt_max || colordepth_err_cnt >= avi_err_cnt_max)){
+		rx_pr("repeat_err_cnt:%d colordepth_err_cnt:%d\n",repeat_err_cnt,colordepth_err_cnt);
+		return true;
+	}
+	return false;
+}
+
 /*
  * check timing info
  */
@@ -1266,6 +1284,8 @@ static bool rx_is_timing_stable(void)
 				rx_pr("repeat(%d=>%d),",
 					rx.pre.repeat,
 					rx.cur.repeat);
+			if(rx_is_repeat_err())
+				repeat_err_cnt ++;
 		}
 	}
 	if (stable_check_lvl & DVI_EN) {
@@ -1293,7 +1313,8 @@ static bool rx_is_timing_stable(void)
 				rx_pr("colordepth(%d=>%d),",
 					rx.pre.colordepth,
 					rx.cur.colordepth);
-			}
+			colordepth_err_cnt ++;
+		}
 	}
 	if (stable_check_lvl & ERR_CNT_EN) {
 		rx_get_error_cnt(&ch0, &ch1, &ch2);
@@ -1841,6 +1862,8 @@ int rx_set_global_variable(const char *buf, int size)
 		return pr_var(hpd_wait_max, index);
 	if (set_pr_var(tmpbuf, sig_unstable_max, value, &index, ret))
 		return pr_var(sig_unstable_max, index);
+	if (set_pr_var(tmpbuf, avi_err_cnt_max, value, &index, ret))
+		return pr_var(avi_err_cnt_max, index);
 	if (set_pr_var(tmpbuf, sig_unready_max, value, &index, ret))
 		return pr_var(sig_unready_max, index);
 	if (set_pr_var(tmpbuf, pow5v_max_cnt, value, &index, ret))
@@ -2125,6 +2148,7 @@ void rx_get_global_variable(const char *buf)
 	pr_var(clk_debug, i++);
 	pr_var(hpd_wait_max, i++);
 	pr_var(sig_unstable_max, i++);
+	pr_var(avi_err_cnt_max, i++);
 	pr_var(sig_unready_max, i++);
 	pr_var(pow5v_max_cnt, i++);
 	pr_var(rgb_quant_range, i++);
@@ -2835,6 +2859,8 @@ void rx_main_state_machine(void)
 		clk_chg_cnt = 0;
 		game_dev_flag = false;
 		rx_pkt_initial();
+		repeat_err_cnt = 0;
+		colordepth_err_cnt = 0;
 		rx.state = FSM_SIG_STABLE;
 		break;
 	case FSM_SIG_STABLE:
@@ -2876,6 +2902,11 @@ void rx_main_state_machine(void)
 						rx_set_eq_run_state(E_EQ_START);
 						vic_check_en = true;
 					}
+					break;
+				}
+				if (rx_is_repeat_err()) {
+					hdmirx_hw_config();
+					rx.state = FSM_HPD_LOW;
 					break;
 				}
 				sig_unready_cnt = 0;
@@ -2921,6 +2952,10 @@ void rx_main_state_machine(void)
 		} else {
 			sig_stable_cnt = 0;
 			rx.var.de_stable = false;
+			if(rx_is_pkt_err()) {
+				rx.state = FSM_HPD_LOW;
+				break;
+			}
 			if (sig_unstable_cnt < sig_unstable_max) {
 				sig_unstable_cnt++;
 				break;
@@ -3001,6 +3036,10 @@ void rx_main_state_machine(void)
 			}
 		} else if (!rx_is_timing_stable()) {
 			skip_frame(skip_frame_cnt);
+			if(rx_is_pkt_err()) {
+				rx.state = FSM_HPD_LOW;
+				break;
+			}
 			if (++sig_unready_cnt >= sig_unready_max) {
 				/*sig_lost_lock_cnt = 0;*/
 				rx.unready_timestamp = rx.timestamp;
@@ -3348,6 +3387,9 @@ static void dump_audio_status(void)
 	}
 	rx_pr("audio receive data:%d\n",
 		auds_rcv_sts);
+	if (isMeridianc() || isMeridian()) {
+		rx_pr("aud mute = %d", a.aud_mute_en);
+	}
 }
 
 static void dump_hdcp_status(void)

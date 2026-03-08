@@ -56,13 +56,15 @@
 /* 20201230: add lcd_customer_pinmux ser api*/
 /* 20210311: add global reset to clear tcon last state*/
 /* 20211009: support 59 & 47 frame rate for tv mode*/
-#define LCD_DRV_VERSION    "20211009"
+/* 20220629: add ini ver2 support and support phy lane contrl*/
+#define LCD_DRV_VERSION    "20220629"
 
 #define VPP_OUT_SATURATE            (1 << 0)
 
 extern struct mutex lcd_vout_mutex;
 extern unsigned char lcd_resume_flag;
 extern int lcd_vout_serve_bypass;
+extern int lcd_version;
 
 static inline unsigned int lcd_do_div(unsigned long long num, unsigned int den)
 {
@@ -112,6 +114,8 @@ extern void lcd_vout_notify_mode_change(void);
 unsigned int cal_crc32(unsigned int crc, const unsigned char *buf, int buf_len);
 
 /* lcd phy */
+unsigned int lcd_phy_vswing_level_to_value(struct aml_lcd_drv_s *pdrv, unsigned int level);
+unsigned int lcd_phy_preem_level_to_value(struct aml_lcd_drv_s *pdrv, unsigned int level);
 extern void lcd_lvds_phy_set(struct lcd_config_s *pconf, int status);
 extern void lcd_vbyone_phy_set(struct lcd_config_s *pconf, int status);
 extern void lcd_mlvds_phy_set(struct lcd_config_s *pconf, int status);

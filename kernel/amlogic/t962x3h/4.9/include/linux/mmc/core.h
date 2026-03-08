@@ -223,7 +223,5 @@ static inline void mmc_claim_host(struct mmc_host *host)
 struct device_node;
 extern u32 mmc_vddrange_to_ocrmask(int vdd_min, int vdd_max);
 extern int mmc_of_parse_voltage(struct device_node *np, u32 *mask);
-extern int mmc_send_vendor_samsung_password_write(struct mmc_card *card, unsigned char *buf);
-extern int mmc_send_vendor_samsung_ssr_read(struct mmc_card *card, unsigned char *buf);
 
 #endif /* LINUX_MMC_CORE_H */

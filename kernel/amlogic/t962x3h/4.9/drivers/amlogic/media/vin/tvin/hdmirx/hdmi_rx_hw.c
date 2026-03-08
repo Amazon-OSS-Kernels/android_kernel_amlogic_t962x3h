@@ -40,6 +40,7 @@
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
 #include <linux/highmem.h>
+#include <linux/amlogic/boardinfo.h>
 
 /* Local include */
 #include "hdmi_rx_eq.h"
@@ -1113,7 +1114,11 @@ void rx_get_audinfo(struct aud_info_s *audio_info)
 	audio_info->aud_packet_received =
 			hdmirx_rd_dwc(DWC_PDEC_AUD_STS);
 	audio_info->cts = hdmirx_rd_dwc(DWC_PDEC_ACR_CTS);
-
+	if (isMeridianc() || isMeridian()) {
+		audio_info->aud_mute_en =
+			(hdmirx_rd_bits_dwc(DWC_PDEC_STS, PD_GCP_MUTE_EN) == 0)
+				? false : true;
+	}
 	audio_info->n = hdmirx_rd_dwc(DWC_PDEC_ACR_N);
 	if (audio_info->cts != 0) {
 		audio_info->arc =
@@ -1142,7 +1147,11 @@ void rx_get_audio_status(struct rx_audio_stat_s *aud_sts)
 			((hdmirx_rd_dwc(DWC_AUD_FIFO_STS) &
 			THS_PASS_STS) == 0) ? false : true;
 		aud_sts->aud_rcv_packet = rx.aud_info.aud_packet_received;
-		aud_sts->aud_stb_flag = aud_sts->afifo_thres_pass;
+		if (isMeridianc() || isMeridian()) {
+			aud_sts->aud_stb_flag = aud_sts->afifo_thres_pass &&
+								(!rx.aud_info.aud_mute_en);
+		} else
+			aud_sts->aud_stb_flag = aud_sts->afifo_thres_pass;
 	} else {
 		memset(aud_sts, 0,
 			sizeof(struct rx_audio_stat_s));
@@ -5422,16 +5431,26 @@ int is_low_amplitude_sig_tm2(void)
 
 	if (!rx.open_fg || (hdmirx_rd_top(TOP_MISC_STAT0) & 0x1))
 		return ret;
-	if (rx.phy.phy_bw <= PHY_BW_2)
+	if (rx.phy.phy_bw <= PHY_BW_2) {
 		wr_reg_hhi_bits(HHI_HDMIRX_PHY_DCHD_CNTL2,
 				DFE_EN, 1);
+		if (isMeridianc() || isMeridian()) {
+			wr_reg_hhi_bits(HHI_HDMIRX_PHY_DCHD_CNTL2,
+					DFE_RSTB, 1);
+		}
+	}
 	wr_reg_hhi_bits(HHI_HDMIRX_PHY_DCHD_CNTL3, DBG_STS_SEL, 0x0);
 	wr_reg_hhi_bits(HHI_HDMIRX_PHY_DCHD_CNTL2, DFE_DBG_STL, 0x0);
 	udelay(100);
 	data32 = rd_reg_hhi(HHI_HDMIRX_PHY_DCHD_STAT);
-	if (rx.phy.phy_bw <= PHY_BW_2)
+	if (rx.phy.phy_bw <= PHY_BW_2) {
 		wr_reg_hhi_bits(HHI_HDMIRX_PHY_DCHD_CNTL2,
 				DFE_EN, 0);
+		if (isMeridianc() || isMeridian()) {
+			wr_reg_hhi_bits(HHI_HDMIRX_PHY_DCHD_CNTL2,
+				DFE_RSTB, 0);
+		}
+	}
 	ch0_tap0 = data32 & 0xff;
 	ch1_tap0 = (data32 >> 8) & 0xff;
 	ch2_tap0 = (data32 >> 16) & 0xff;

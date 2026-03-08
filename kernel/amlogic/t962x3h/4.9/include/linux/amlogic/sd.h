@@ -369,6 +369,8 @@ struct amlsd_platform {
 	char pinname[32];
 	char dmode[8];
 	unsigned int gpio_ro;
+	unsigned int gpio_trigger12;
+	unsigned int gpio_trigger13;
 	unsigned int gpio_dat3;
 	unsigned int hw_reset;
 	unsigned int jtag_pin;

@@ -5280,10 +5280,10 @@ unsigned char dim_pre_de_buf_config(unsigned int channel)
 
 		if ((((vframe->signal_type >> 8) & 0xff) == 0x30) &&
 		    ((((vframe->signal_type >> 16) & 0xff) == 9) ||
-		     (((vframe->signal_type >> 16) & 0xff) == 2)) &&
-		    (vframe->source_type != VFRAME_SOURCE_TYPE_HDMI)) {
+		     (((vframe->signal_type >> 16) & 0xff) == 2))) {
 			struct provider_aux_req_s req;
 			char *provider_name = NULL, *tmp_name = NULL;
+			u32 sei_size = 0;
 
 			provider_name = vf_get_provider_name(VFM_NAME);
 			while (provider_name) {
@@ -5304,12 +5304,52 @@ unsigned char dim_pre_de_buf_config(unsigned int channel)
 			}
 			if (req.aux_buf && req.aux_size &&
 			    di_buf->local_meta &&
-			    (di_buf->local_meta_total_size >= req.aux_size)) {
-				memcpy(di_buf->local_meta, req.aux_buf, req.aux_size);
+			    di_buf->local_meta_total_size >= req.aux_size) {
+				memcpy(di_buf->local_meta, req.aux_buf,
+					req.aux_size);
 				di_buf->local_meta_used_size = req.aux_size;
-			} else if (di_buf->local_meta && provider_name) {
-				pr_info("DI: get meta data error -- aux_buf:%p, size:%d (%d)\n",
-					req.aux_buf, req.aux_size, di_buf->local_meta_total_size);
+			} else if (req.aux_buf && req.aux_size) {
+				char *sei_ptr = NULL;
+
+				if (!di_buf->local_meta || !di_buf->local_meta_total_size) {
+					pr_info("DI: no local buffer copy aux_buf:%px, size:%d (%d), %s\n",
+						req.aux_buf, req.aux_size,
+						di_buf->local_meta_total_size,
+						provider_name);
+				} else {
+					sei_size = 0;
+					sei_ptr = find_vframe_sei(vframe,
+						req.aux_buf, req.aux_size, &sei_size);
+					if (sei_ptr && sei_size &&
+					    di_buf->local_meta_total_size >= sei_size) {
+						memcpy(di_buf->local_meta,
+							sei_ptr, sei_size);
+						di_buf->local_meta_used_size = sei_size;
+						pr_info("DI: find the sei:%px size:%d; aux_buf:%px, size:%d (%d), %s\n",
+							sei_ptr, sei_size,
+							req.aux_buf, req.aux_size,
+							di_buf->local_meta_total_size,
+							provider_name);
+					} else if (sei_ptr && sei_size) {
+						memcpy(di_buf->local_meta, sei_ptr,
+							di_buf->local_meta_total_size);
+						di_buf->local_meta_used_size =
+							di_buf->local_meta_total_size;
+						pr_info("DI: copy incompleted sei:%px, size:%d (%d), %s\n",
+							sei_ptr, sei_size,
+							di_buf->local_meta_total_size,
+							provider_name);
+					} else {
+						memcpy(di_buf->local_meta, req.aux_buf,
+							di_buf->local_meta_total_size);
+						di_buf->local_meta_used_size =
+							di_buf->local_meta_total_size;
+						pr_info("DI: copy incompleted aux_buf:%px, size:%d (%d), %s\n",
+							req.aux_buf, req.aux_size,
+							di_buf->local_meta_total_size,
+							provider_name);
+					}
+				}
 			}
 		}
 
@@ -8310,6 +8350,14 @@ static void post_ready_buf_set(unsigned int ch, struct di_buf_s *di_buf)
 
 	vframe_ret = di_buf->vframe;
 	nr_buf = di_buf->di_buf_dup_p[1];
+
+	clear_vframe_src_fmt(vframe_ret);
+	if (di_buf->local_meta &&
+		di_buf->local_meta_used_size)
+		update_vframe_src_fmt(vframe_ret,
+			di_buf->local_meta,
+			di_buf->local_meta_used_size,
+			false, NULL, NULL);
 	if ((dimp_get(edi_mp_post_wr_en)	&&
 	     dimp_get(edi_mp_post_wr_support))	&&
 	    di_buf->process_fun_index != PROCESS_FUN_NULL) {
@@ -10181,9 +10229,8 @@ static unsigned int dim_bypass_check(struct vframe_s *vf)
 	} else if (VFMT_IS_P(vf->type)) {
 		reason = 8;
 #endif//temp bypass p
-	/*true bypass for 720p above*/
-	} else if ((vf->flag & VFRAME_FLAG_GAME_MODE) &&
-		   (vf->width > 720)) {
+	/*true bypass for game mode*/
+	} else if (vf->flag & VFRAME_FLAG_GAME_MODE) {
 		reason = 7;
 	} else if (vf->flag & VFRAME_FLAG_HIGH_BANDWIDTH) {
 		reason = 0xa;

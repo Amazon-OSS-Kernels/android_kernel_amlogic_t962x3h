@@ -1221,7 +1221,8 @@ static int lcd_extern_get_config_unifykey(struct lcd_extern_config_s *extconf)
 		EXTPR("crc32             = 0x%08x\n", ext_header.crc32);
 		EXTPR("data_len          = %d\n", ext_header.data_len);
 		EXTPR("version           = 0x%04x\n", ext_header.version);
-		EXTPR("reserved          = 0x%04x\n", ext_header.reserved);
+		EXTPR("block_next_flag   = %d\n", ext_header.block_next_flag);
+		EXTPR("block_cur_size   = %d\n", ext_header.block_cur_size);
 	}
 
 	/* basic: 33byte */

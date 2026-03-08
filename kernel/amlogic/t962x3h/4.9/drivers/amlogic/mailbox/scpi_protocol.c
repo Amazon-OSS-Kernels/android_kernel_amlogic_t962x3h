@@ -1101,7 +1101,7 @@ EXPORT_SYMBOL_GPL(scpi_set_wol_power);
 
 int scpi_get_wol_power(void)
 {
-	pr_err("Don't surport get wol_power");
+	/// pr_err("Don't surport get wol_power");
 	return -1;
 }
 EXPORT_SYMBOL_GPL(scpi_get_wol_power);

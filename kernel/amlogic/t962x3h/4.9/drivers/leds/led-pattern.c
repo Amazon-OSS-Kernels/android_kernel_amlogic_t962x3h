@@ -188,14 +188,25 @@ int red_single_blink_on(struct led_classdev *led_cdev)
 	return 0;
 }
 
+extern int idme_get_model_name(char *model_name);
 static void led_set_twenty_percent(struct work_struct *work)
 {
 	struct led_pwm_data *ldata = container_of(to_delayed_work(work),
 			struct led_pwm_data, led_work);
 	struct led_classdev *led_cdev = &ldata->cdev;
-	pr_warn("led: enter led_set_twenty_percent\n");
+	char model_name[128] = {0};
 
-	led_set_brightness(led_cdev, 51);/* 20 percent brightness */
+	idme_get_model_name(model_name);
+	if (strstr(model_name, "modelc") != NULL) {
+		pr_warn("led: enter led_set_fifty_percent\n");
+		led_set_brightness(led_cdev, 128);/* 50 percent brightness */
+	} else if (strstr(model_name, "/tvconfig/75C350LU_0003/") != NULL) {
+		pr_warn("led: enter led_set_100_percent\n");
+		led_set_brightness(led_cdev, 255);/* 100 percent brightness */
+	} else {
+		pr_warn("led: enter led_set_twenty_percent\n");
+		led_set_brightness(led_cdev, 51);/* 20 percent brightness */
+	}
 }
 
 /*pattern = 6, led blink once and set 20 percent brightness*/

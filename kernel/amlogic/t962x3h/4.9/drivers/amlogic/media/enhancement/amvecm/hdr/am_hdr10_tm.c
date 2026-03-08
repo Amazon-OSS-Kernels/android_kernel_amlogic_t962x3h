@@ -36,6 +36,11 @@ MODULE_PARM_DESC(hdr10_tm_dbg, "HDR10 tone mapping dbg\n");
 			pr_info(fmt, ## args);\
 	} while (0)
 
+unsigned int force_tog = 0;
+module_param(force_tog, uint, 0664);
+MODULE_PARM_DESC(force_tog, "display force_tog\n");
+
+
 unsigned int panell = 400;
 module_param(panell, uint, 0664);
 MODULE_PARM_DESC(panell, "display panel luminance\n");
@@ -69,6 +74,12 @@ MODULE_PARM_DESC(sc_th, "scene change th\n");
 u32 hdr_tm_iir = 1;
 module_param(hdr_tm_iir, uint, 0664);
 MODULE_PARM_DESC(hdr_tm_iir, "HDR_TM_IIR\n");
+
+/* blend ratio: gain = bld_ratio * bld_gain + (256 - bld_ratio) * gain*/
+u32 bld_ratio = 250;
+module_param(bld_ratio, uint, 0664);
+MODULE_PARM_DESC(bld_ratio, "bld_ratio\n");
+
 
 int bypass_tm[149] = {
 	64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
@@ -242,6 +253,8 @@ void decasteliau_alg(u64 *ebzcur, u64 step, u64 range, u64 *p, u32 order)
 
 static u64 curvex[OE_X], curvey[OE_X];
 static u32 oo_gain[OE_X];
+static u32 bld_gain[OE_X];
+
 
 int gen_knee_anchor(u32 maxl, u32 panell, u64 *sx, u64 *sy, u64 *anchor)
 {
@@ -499,7 +512,19 @@ int hdr10_tm_dynamic_proc(struct vframe_master_display_colour_s *p)
 			sizeof(u32) * OE_X);
 	else if (hdr10_tm_enable == 1) {
 		dynamic_hdr_sdr_ootf(maxl, panel_luma, sx, sy, anchor);
-		memcpy(oo_y_lut_hdr_sdr, oo_gain, sizeof(u32) * OE_X);
+		if (scn_chang_flag == 0 || scn_chang_flag == 1 || force_tog == 1) {
+			memcpy(oo_y_lut_hdr_sdr, oo_gain, sizeof(u32) * OE_X);
+			memcpy(bld_gain, oo_gain, sizeof(u32) * OE_X);
+			if (force_tog == 1)
+				force_tog = 0;
+		} else {
+			for (i = 0; i < OE_X; i++) {
+				oo_y_lut_hdr_sdr[i] = (bld_gain[i] * bld_ratio +
+					((1 << 8) - bld_ratio) * oo_gain[i]) >> 8;
+			}
+			memcpy(bld_gain, oo_y_lut_hdr_sdr, sizeof(u32) * OE_X);
+		}
+
 	} else if (hdr10_tm_enable == 2) {
 		hdr10_tmo_gen(oo_gain);
 		memcpy(oo_y_lut_hdr_sdr, oo_gain, sizeof(u32) * OE_X);

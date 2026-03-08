@@ -1605,9 +1605,9 @@ void refresh_on_vs(struct vframe_s *vf, struct vframe_s *rpt_vf)
 		if (!for_dolby_vision_certification())
 #endif
 			ve_on_vs(vf ? vf : rpt_vf);
-		if (vf && is_video_layer_on(VD1_PATH)) {
-			ve_hist_gamma_tgt(vf);
-			vpp_backup_histgram(vf);
+		if (is_video_layer_on(VD1_PATH)) {
+			ve_hist_gamma_tgt(vf ? vf : rpt_vf);
+			vpp_backup_histgram(vf ? vf : rpt_vf);
 		}
 		pattern_detect(vf ? vf : rpt_vf);
 	} else {
@@ -2264,6 +2264,7 @@ static long amvecm_ioctl(struct file *file,
 			&hdr10_tm_enable, (void __user *)arg,
 			sizeof(enum hdr10_tm_state)))
 			ret = -EFAULT;
+		force_tog = 1;
 		force_toggle();
 		pr_amvecm_dbg("hdr10+ tone mapping done\n");
 		break;
@@ -4713,21 +4714,33 @@ static ssize_t amvecm_post_matrix_data_show(struct class *cla,
 			struct class_attribute *attr, char *buf)
 {
 	int len = 0, val1 = 0, val2 = 0;
+	unsigned char bit_depth = 12;
+	unsigned int probe_color, probe_color1;
 
-	val1 = READ_VPP_REG(VPP_MATRIX_PROBE_COLOR);
-	if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12A)) {
-		len += sprintf(buf+len,
-		"VPP_MATRIX_PROBE_COLOR %d, %d, %d\n",
-		(val1 >> 20) & 0x3ff,
-		(val1 >> 10) & 0x3ff,
-		(val1 >> 0) & 0x3ff);
+	probe_color = VPP_MATRIX_PROBE_COLOR;
+	probe_color1 = VPP_MATRIX_PROBE_COLOR1;
+
+	if (is_meson_tl1_cpu() ||
+		get_cpu_type() == MESON_CPU_MAJOR_ID_T5 ||
+		get_cpu_type() == MESON_CPU_MAJOR_ID_T5D)
+		bit_depth = 10;
+
+	if (bit_depth == 10) {
+		val1 = READ_VPP_REG(probe_color);
+		len += sprintf(buf + len,
+			"VPP_MATRIX_PROBE_COLOR %d, %d, %d\n",
+			(val1 >> 20) & 0x3ff,
+			(val1 >> 10) & 0x3ff,
+			(val1 >> 0) & 0x3ff);
 	} else {
-		val2 = READ_VPP_REG(VPP_MATRIX_PROBE_COLOR1);
-		len += sprintf(buf+len,
-		"VPP_MATRIX_PROBE_COLOR %x, %x, %x\n",
-		((val2 & 0xf) << 8) | ((val1 >> 24) & 0xff),
-		(val1 >> 12) & 0xfff, val1 & 0xfff);
+		val1 = READ_VPP_REG(probe_color);
+		val2 = READ_VPP_REG(probe_color1);
+		len += sprintf(buf + len,
+			"VPP_MATRIX_PROBE_COLOR %d, %d, %d\n",
+			(((val2 & 0xf) << 8) | ((val1 >> 24) & 0xff)) >> 2,
+			((val1 >> 12) & 0xfff) >> 2, (val1 & 0xfff) >> 2);
 	}
+
 	return len;
 }
 
@@ -6903,6 +6916,12 @@ static void sr_init_config(void)
 	am_set_regmap(&sr1_default);
 }
 
+static void force_dst_primary_refresh(void)
+{
+	vecm_latch_flag |= FLAG_COLORPRI_LATCH;
+	force_toggle();
+}
+
 static const char *amvecm_debug_usage_str = {
 	"Usage:\n"
 	"echo vpp_size > /sys/class/amvecm/debug; get vpp size config\n"
@@ -7808,6 +7827,11 @@ static ssize_t amvecm_debug_store(struct class *cla,
 		}
 		mltcast_skip_en = val;
 		pr_info("setting value: %d\n", mltcast_skip_en);
+	} else if (!strcmp(parm[0], "force_dst_primary")) {
+		if (!strcmp(parm[1], "refresh")) {
+			force_dst_primary_refresh();
+			pr_info("force_dst_primary refresh\n");
+		}
 	} else
 		pr_info("unsupport cmd\n");
 

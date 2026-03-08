@@ -61,6 +61,7 @@ struct ntp8918_priv {
 	int drc_enable;
 	unsigned char master_clk;
 	char *m_reg_tab;
+	int reg_table_size;
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	struct early_suspend early_suspend;
@@ -227,6 +228,8 @@ static int ntp8918_set_reg(struct snd_kcontrol *kcontrol,
 	ret = copy_from_user(p, val, size);
 	if (ret)
 		return -EFAULT;
+
+	ntp8918->reg_table_size = size;
 
 	while (i < size) {
 		if (p[0] == 0x7e)
@@ -584,6 +587,9 @@ static int ntp8918_resume(struct snd_soc_codec *codec)
 {
 	struct ntp8918_priv *ntp8918 =
 		snd_soc_codec_get_drvdata(codec);
+	char *p = ntp8918->m_reg_tab;
+	int i = 0;
+	bool i2c_4byte_on = false;
 
 	dev_info(codec->dev, "%s!\n", __func__);
 
@@ -594,7 +600,28 @@ static int ntp8918_resume(struct snd_soc_codec *codec)
 	snd_soc_write(codec, C1VOL, ntp8918->Ch1_vol);
 	snd_soc_write(codec, C2VOL, ntp8918->Ch2_vol);
 	snd_soc_write(codec, MVOL, ntp8918->master_vol);
+
+	while (i < ntp8918->reg_table_size) {
+		if (p[0] == 0x7e)
+			i2c_4byte_on = false;
+
+		if (!i2c_4byte_on) {
+			snd_soc_write(codec, p[0], p[1]);
+			i += 2;
+		} else {
+			regmap_raw_write(ntp8918->regmap, p[0],
+				p+1, 4);
+			i += 5;
+		}
+
+		if (p[0] == 0x7e && (p[1] == 0x03 || p[1] == 0x08))
+			i2c_4byte_on = true;
+		else if (p[0] == 0x7e && (p[1] == 0x00))
+			i2c_4byte_on = false;
+		p = ntp8918->m_reg_tab + i;
+	}
 	ntp8918_mute(codec, ntp8918->mute);
+
 	return 0;
 }
 #else
@@ -706,6 +733,7 @@ static int ntp8918_i2c_probe(struct i2c_client *i2c,
 		return -ENOMEM;
 
 	memset(ntp8918->m_reg_tab, 0, NTP8918_REGISTER_COUNT);
+	ntp8918->reg_table_size = 0;
 
 	if (ret != 0)
 		dev_err(&i2c->dev, "%s, Failed to register codec (%d)\n", __func__, ret);

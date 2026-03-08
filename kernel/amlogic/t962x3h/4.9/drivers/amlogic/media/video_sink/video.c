@@ -217,6 +217,10 @@ static long long  max_dis_hwc;
 
 #define PARSE_MD_IN_ADVANCE 1
 
+static int drop_cnt_last;
+static int drop_cnt_continue_max;
+static u64 drop_last_jiffies_64;
+
 static int video_receiver_event_fun(int type, void *data, void *);
 
 static const struct vframe_receiver_op_s video_vf_receiver = {
@@ -2009,6 +2013,12 @@ static void process_hdmi_video_sync(struct vframe_s *vf)
 	     hdmin_delay_start == 0) || !vf || last_required_total_delay <= 0)
 		return;
 
+	if (vf->flag & VFRAME_FLAG_GAME_MODE) {
+		if (debug_flag & DEBUG_FLAG_HDMI_AVSYNC_DEBUG)
+			pr_info("game mode, not do avsync\n");
+		return;
+	}
+
 	hdmin_delay_duration = 0;
 	while (provider_name) {
 		if (!vf_get_provider_name(provider_name))
@@ -2610,8 +2620,8 @@ static inline bool vpts_expire(struct vframe_s *cur_vf,
 				ret = true;
 			} else {
 				ret = false;
-pr_info("%s: src:%dx%d ratio:%d [%d, %d]; dst: %dx%d, ratio:%d\n",
-				__func__, src_w, src_h, src_ratio,
+				pr_info("%s: src:%dx%d ratio:%d [%d, %d]; dst: %dx%d, ratio:%d\n",
+					__func__, src_w, src_h, src_ratio,
 						min_dst_ratio, max_dst_ratio,
 						dst_w, dst_h, dst_ratio);
 			}
@@ -2621,10 +2631,14 @@ pr_info("%s: src:%dx%d ratio:%d [%d, %d]; dst: %dx%d, ratio:%d\n",
 				hold_frames++;
 			if (hold_frames >= HOLD_RATIO_TIMEOUT) {
 				ret = true;
-				pr_info("hold frames timeout: %d > %d\n",
-					hold_frames, HOLD_RATIO_TIMEOUT);
+				pr_info("%s hold frames timeout: %d > %d\n",
+					__func__, hold_frames, HOLD_RATIO_TIMEOUT);
 			}
 			return ret;
+		} else if (cur_vf && cur_vf != next_vf &&
+			cur_vf->width == next_vf->width &&
+			cur_vf->height == next_vf->height) {
+			hold_frames = 0;
 		}
 	}
 	if ((freerun_mode == FREERUN_NODUR) || hdmi_in_onvideo)
@@ -2688,7 +2702,9 @@ pr_info("%s: src:%dx%d ratio:%d [%d, %d]; dst: %dx%d, ratio:%d\n",
 	}
 	/* check video PTS discontinuity */
 	if ((enable_video_discontinue_report) &&
-	    (first_frame_toggled) &&
+	    (first_frame_toggled || (!first_frame_toggled &&
+	    tsync_get_mode() == TSYNC_MODE_PCRMASTER && pts &&
+	    pts > systime && pts - systime > TIME_UNIT90K * 10)) &&
 	    (AM_ABSSUB(systime, pts) > tsync_vpts_discontinuity_margin()) &&
 	    ((next_vf->flag & VFRAME_FLAG_NO_DISCONTINUE) == 0)) {
 		/*
@@ -2715,7 +2731,8 @@ pr_info("%s: src:%dx%d ratio:%d [%d, %d]; dst: %dx%d, ratio:%d\n",
 			pr_info("vsync_pts_align=%d\n", vsync_pts_align);
 		}
 
-		if ((int)(systime - pts) >= 0) {
+		if ((int)(systime - pts) >= 0 &&
+			tsync_get_mode() != TSYNC_MODE_PCRMASTER) {
 			if (next_vf->pts != 0)
 				tsync_avevent_locked(VIDEO_TSTAMP_DISCONTINUITY,
 						     next_vf->pts);
@@ -2753,10 +2770,25 @@ pr_info("%s: src:%dx%d ratio:%d [%d, %d]; dst: %dx%d, ratio:%d\n",
 			 *  to notify tsync and adjust the sysclock to
 			 * make playback smooth.
 			 */
-			if (next_vf->pts != 0)
+			if (pts == 0)
+				pts = timestamp_vpts_get() + (cur_vf ?
+					DUR2PTS(cur_vf->duration) : 0);
+			/*
+			 * show nosync and the first was toggled case:
+			 * if the first vpts is bigger the threshold(10s)
+			 * than the pcrpts, toggle the discontinuity
+			 */
+			if (show_first_frame_nosync && pts > systime &&
+				(pts - systime) < TIME_UNIT90K * 10 &&
+				new_frame_count == 1)
+				return false;
+			if (next_vf->pts != 0) {
 				tsync_avevent_locked(VIDEO_TSTAMP_DISCONTINUITY,
 					next_vf->pts);
-			else if (next_vf->pts == 0) {
+				if ((u64)(timestamp_pcrscr_get() +
+					vsync_pts_inc) >= 0xFFFFFFFF)
+					return true;
+			} else if (next_vf->pts == 0) {
 				tsync_avevent_locked(VIDEO_TSTAMP_DISCONTINUITY,
 					pts);
 				return true;
@@ -2879,21 +2911,20 @@ pr_info("%s: src:%dx%d ratio:%d [%d, %d]; dst: %dx%d, ratio:%d\n",
 			org_vpts = timestamp_vpts_get() +
 				(cur_vf ? DUR2PTS(cur_vf->duration) : 0);
 		if ((org_vpts + vsync_pts_inc - systime) <=
-			M_PTS_SMOOTH_MIN) {
+			M_PTS_SMOOTH_MIN && !video_frame_repeat_count) {
 			smooth_sync_expired = 1;
 			video_frame_repeat_count = 0;
 			//pr_info("smooth_sync: ok\n");
 		}
 		if ((org_vpts + vsync_pts_inc - systime) <
-			M_PTS_SMOOTH_MAX &&
-			(org_vpts + vsync_pts_inc - systime) >
-			M_PTS_SMOOTH_MIN && smooth_sync_expired == 0) {
+			M_PTS_SMOOTH_MAX && smooth_sync_expired == 0) {
 			if (!video_frame_repeat_count) {
 				vpts_ref = org_vpts;
 				video_frame_repeat_count++;
 				//pr_info("smooth_sync enabled\n");
 			}
-			if ((int)(org_vpts + vsync_pts_inc - systime) > 0) {
+			if ((int)(org_vpts - vsync_pts_align - vsync_pts_inc -
+				systime) > 0) {
 				adjust_pts = vpts_ref + (vsync_pts_inc -
 					vsync_pts_inc / M_PTS_SMOOTH_FACTOR) *
 					video_frame_repeat_count;
@@ -5606,6 +5637,17 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 			int iret1 = 0, iret2 = 0;
 #endif
 
+			/* show first frame only if show_nosync was enabled */
+			if (show_nosync && tsync_get_mode() ==
+				TSYNC_MODE_PCRMASTER) {
+				show_nosync = false;
+				if (DEBUG_FLAG_OMX_DEBUG_DROP_FRAME &
+					debug_flag) {
+					pr_info("%s, show_nosync disabled\n",
+						__func__);
+				}
+			}
+
 			ATRACE_COUNTER(MODULE_NAME,  __LINE__);
 			if (debug_flag & DEBUG_FLAG_PTS_TRACE)
 				pr_info("vpts = 0x%x, c.dur=0x%x, n.pts=0x%x, scr = 0x%x, pcr-pts-diff=%d, ptstrace=%d\n",
@@ -5924,6 +5966,16 @@ SET_FILTER:
 	}
 #endif
 	while (vf && !video_suspend) {
+		if (videosync_need_drop()) {
+			pr_info("drop omx_index %d, pts %d\n",
+					vf->omx_index, vf->pts);
+			vf = vf_get(RECEIVERPIP_NAME);
+			if (vf) {
+				vf_put(vf, RECEIVERPIP_NAME);
+				pr_info("#line %d: drop frame\n", __LINE__);
+			}
+			continue;
+		}
 		if (!vf->frame_dirty) {
 #if defined(CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_VECM)
 			int iret1 = 0, iret2 = 0;
@@ -6757,6 +6809,19 @@ exit:
 		vsync_exit_line_max = enc_line;
 	if (video_suspend)
 		video_suspend_cycle++;
+
+	if (drop_cnt_continue_max < drop_frame_count - drop_cnt_last)
+		drop_cnt_continue_max = drop_frame_count - drop_cnt_last;
+	if (div_u64(((jiffies_64 - drop_last_jiffies_64) * 1000), HZ) > 5000) {
+		drop_last_jiffies_64 = jiffies_64;
+		pr_info("vpp: total:rec=%d;drop=%d; max_continue_drop in last 5s=%d\n",
+			receive_frame_count, drop_frame_count, drop_cnt_continue_max);
+		drop_cnt_continue_max = 0;
+	}
+	drop_cnt_last = drop_frame_count;
+
+	if (vd_layer[0].dispbuf)
+		last_frame_duration = vd_layer[0].dispbuf->duration;
 #ifdef FIQ_VSYNC
 	if (video_notify_flag)
 		fiq_bridge_pulse_trigger(&vsync_fiq_bridge);
@@ -7313,6 +7378,8 @@ static int video_receiver_event_fun(int type, void *data, void *private_data)
 		drop_frame_count = 0;
 		receive_frame_count = 0;
 		display_frame_count = 0;
+		drop_last_jiffies_64 = jiffies_64;
+		drop_cnt_continue_max = 0;
 		mutex_lock(&omx_mutex);
 		omx_run = false;
 		omx_pts_set_from_hwc_count = 0;
@@ -7645,14 +7712,59 @@ EXPORT_SYMBOL(di_unreg_notify);
 #define SEI_ITU_T_T35 4
 #define ATSC_T35_PROV_CODE    0x0031
 #define DVB_T35_PROV_CODE     0x003B
+#define AV1_HDR10P_T35_PROV_CODE   0x003C
+#define AV1_HDR10P_T35_PROV_ORIENTED_CODE   0x0001
+#define AV1_HDR10P_APPLICATION_IDENTIFIER   4
+
 #define ATSC_USER_ID_CODE     0x47413934
 #define DVB_USER_ID_CODE      0x00000000
 #define DM_MD_USER_TYPE_CODE  0x09
+#define FMT_TYPE_DV 0
+#define FMT_TYPE_DV_AV1 1
+#define FMT_TYPE_HDR10_PLUS 2
+#define FMT_TYPE_PRIME 3
+#define FMT_TYPE_HDR10_PLUS_AV1 4
+#ifndef DV_SEI
+#define DV_SEI 0x01000000
+#endif
+/* for both dv and hdr10plus */
+#ifndef AV1_SEI
+#define AV1_SEI 0x14000000
+#endif
+#ifndef HDR10P
+#define HDR10P 0x02000000
+#endif
 
-static int check_media_sei(char *sei, u32 sei_size, u32 sei_type)
+bool check_av1_hdr10p(char *p)
 {
-	int ret = 0;
-	char *p;
+	u32 country_code;
+	u32 provider_code;
+	u32 provider_oriented_code;
+	u32 application_identifier;
+
+	if (!p)
+		return false;
+
+	country_code = *(p);
+	provider_code = (*(p + 1) << 8) |
+			*(p + 2);
+	provider_oriented_code = (*(p + 3) << 8) | *(p + 4);
+	application_identifier = *(p + 5);
+	if (country_code == 0xB5 &&
+	    provider_code ==
+	    AV1_HDR10P_T35_PROV_CODE &&
+	    provider_oriented_code == AV1_HDR10P_T35_PROV_ORIENTED_CODE &&
+	    application_identifier == AV1_HDR10P_APPLICATION_IDENTIFIER)
+		return true;
+	else
+		return false;
+}
+EXPORT_SYMBOL(check_av1_hdr10p);
+
+static char *check_media_sei(char *sei, u32 sei_size, u32 fmt_type, u32 *ret_size)
+{
+	char *ret = NULL;
+	char *p, *cur_p;
 	u32 type = 0, size;
 	unsigned char nal_type;
 	unsigned char sei_payload_type = 0;
@@ -7662,12 +7774,28 @@ static int check_media_sei(char *sei, u32 sei_size, u32 sei_type)
 	u32 provider_code;
 	u32 user_id;
 	u32 user_type_code;
+	u32 sei_type;
+
+	if (ret_size)
+		*ret_size = 0;
+	if (fmt_type == FMT_TYPE_DV)
+		sei_type = DV_SEI;
+	else if (fmt_type == FMT_TYPE_DV_AV1)
+		sei_type = AV1_SEI;
+	else if (fmt_type == FMT_TYPE_HDR10_PLUS ||
+		fmt_type == FMT_TYPE_PRIME)
+		sei_type = HDR10P; /* same sei type */
+	else if (fmt_type == FMT_TYPE_HDR10_PLUS_AV1)
+		sei_type = AV1_SEI;
+	else
+		return ret;
 
 	if (!sei || sei_size <= 8)
 		return ret;
 
 	p = sei;
 	while (p < sei + sei_size - 8) {
+		cur_p = p;
 		size = *p++;
 		size = (size << 8) | *p++;
 		size = (size << 8) | *p++;
@@ -7676,14 +7804,40 @@ static int check_media_sei(char *sei, u32 sei_size, u32 sei_type)
 		type = (type << 8) | *p++;
 		type = (type << 8) | *p++;
 		type = (type << 8) | *p++;
-
-		if (((sei_type == DV_SEI || sei_type == HDR10P) &&
-			sei_type == type) ||
-			(sei_type == DV_AV1_SEI &&
-			sei_type == (type & 0xffff0000))) {
-			ret = 1;
+		if (ret_size)
+			*ret_size = size + 8;
+		if ((sei_type == DV_SEI && sei_type == type)) {/*h264/h265 dv*/
+			ret = cur_p;
 			break;
-		} else if ((sei_type == DV_SEI) && type == HDR10P) {
+		} else if (fmt_type == FMT_TYPE_DV_AV1 &&
+			   sei_type == (type & 0xffff0000) &&
+			   size > 6) {
+			/*av1 dv, double check nal type and payload type to distinguish hdr10p*/
+			if (!check_av1_hdr10p(p))
+				ret = cur_p;
+			if (debug_flag & DEBUG_FLAG_OMX_DV_DROP_FRAME)
+				pr_info("check FMT_TYPE_DV_AV1 %px\n", ret);
+			break;
+		} else if (fmt_type == FMT_TYPE_HDR10_PLUS && sei_type == type) {
+			/* TODO: double check nal type and payload type */
+			ret = cur_p;
+			break;
+		} else if (fmt_type == FMT_TYPE_HDR10_PLUS_AV1 &&
+			   sei_type == (type & 0xffff0000) &&
+			   size > 6) {
+			/* av1 hdr10p, double check nal type and payload type */
+			/*4 byte size + 4 byte type*/
+			/*1 byte country_code B5*/
+			/*2 byte provider_code 003C*/
+			/*2 byte provider_oriented_code 0001, 2094-40*/
+			/*1 byte app_identifier 4*/
+			/*1 byte app_mode 1*/
+			if (check_av1_hdr10p(p))
+				ret = cur_p;
+			if (debug_flag & DEBUG_FLAG_OMX_DV_DROP_FRAME)
+				pr_info("check FMT_TYPE_HDR10_PLUS_AV1 %px\n", ret);
+			break;
+		} else if (sei_type == DV_SEI && type == HDR10P) {
 			/* check DVB/ATSC as DV */
 			if (p >= sei + sei_size - 12)
 				break;
@@ -7713,13 +7867,15 @@ static int check_media_sei(char *sei, u32 sei_size, u32 sei_type)
 						len_2094_sei = sei_payload_size;
 				}
 				if (len_2094_sei > 0) {
-					ret = 1;
+					ret = cur_p;
 					break;
 				}
 			}
 		}
 		p += size;
 	}
+	if (!ret && ret_size)
+		*ret_size = 0;
 	return ret;
 }
 
@@ -7798,8 +7954,8 @@ s32 update_vframe_src_fmt(
 				pr_info("ignore nonstandard dv\n");
 		}
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
-		else if (dual_layer || check_media_sei(sei, size, DV_SEI) ||
-			   check_media_sei(sei, size, DV_AV1_SEI)) {
+		else if (dual_layer || check_media_sei(sei, size, FMT_TYPE_DV, NULL) ||
+			   check_media_sei(sei, size, FMT_TYPE_DV_AV1, NULL)) {
 			vf->src_fmt.fmt = VFRAME_SIGNAL_FMT_DOVI;
 			vf->src_fmt.dual_layer = dual_layer;
 #if PARSE_MD_IN_ADVANCE
@@ -7848,7 +8004,8 @@ s32 update_vframe_src_fmt(
 		} else if ((signal_transfer_characteristic == 0x30) &&
 			     ((signal_color_primaries == 9) ||
 			      (signal_color_primaries == 2))) {
-			if (check_media_sei(sei, size, HDR10P))
+			if (check_media_sei(sei, size, FMT_TYPE_HDR10_PLUS, NULL) ||
+			    check_media_sei(sei, size, FMT_TYPE_HDR10_PLUS_AV1, NULL))
 				vf->src_fmt.fmt =
 					VFRAME_SIGNAL_FMT_HDR10PLUS;
 			else /* TODO: if need switch to HDR10 */
@@ -7881,6 +8038,10 @@ s32 update_vframe_src_fmt(
 	}
 	if (vf->src_fmt.fmt != VFRAME_SIGNAL_FMT_DOVI)
 		clear_vframe_dovi_md_info(vf);
+
+	if (debug_flag & DEBUG_FLAG_OMX_DV_DROP_FRAME)
+		pr_info("[%s]fmt: %d, vf %p, sei %p\n", __func__, vf->src_fmt.fmt,
+				vf, vf->src_fmt.sei_ptr);
 
 	return 0;
 }
@@ -7967,6 +8128,82 @@ s32 clear_vframe_src_fmt(struct vframe_s *vf)
 	return 0;
 }
 EXPORT_SYMBOL(clear_vframe_src_fmt);
+
+char *find_vframe_sei(struct vframe_s *vf,
+		void *sei, u32 size, u32 *ret_size)
+{
+	u32 cur_sei_size = 0;
+	char *ret_sei = NULL;
+	bool dv_src = false;
+	bool hdr10p = false;
+
+	if (!vf || !ret_size)
+		return NULL;
+
+	*ret_size = 0;
+
+	if (!sei || !size || (vf->type & VIDTYPE_MVC))
+		return NULL;
+
+	ret_sei = NULL;
+	if (!vf->discard_dv_data) {
+		ret_sei = check_media_sei(sei, size, FMT_TYPE_DV, &cur_sei_size);
+		if (!ret_sei) {
+			cur_sei_size = 0;
+			ret_sei = check_media_sei(sei, size, FMT_TYPE_DV_AV1, &cur_sei_size);
+		}
+		if (ret_sei && cur_sei_size)
+			dv_src = true;
+	}
+
+	if (!dv_src) {
+		if ((signal_transfer_characteristic == 14 ||
+		     signal_transfer_characteristic == 18) &&
+		    signal_color_primaries == 9) {
+		    /* HLG */
+			ret_sei = NULL;
+			cur_sei_size = 0;
+		} else if ((signal_transfer_characteristic == 0x30) &&
+			     ((signal_color_primaries == 9) ||
+			      (signal_color_primaries == 2))) {
+			/* HDR10+ */
+			ret_sei = check_media_sei(sei, size, FMT_TYPE_HDR10_PLUS, &cur_sei_size);
+			if (!ret_sei) {
+				cur_sei_size = 0;
+				ret_sei = check_media_sei(sei, size,
+					FMT_TYPE_HDR10_PLUS_AV1, &cur_sei_size);
+			}
+			if (ret_sei && cur_sei_size) {
+				hdr10p = true;
+			} else {
+				/* Switch to HDR10 */
+				ret_sei = NULL;
+				cur_sei_size = 0;
+			}
+		} else if ((signal_transfer_characteristic == 16) &&
+			     ((signal_color_primaries == 9) ||
+			      (signal_color_primaries == 2))) {
+		    /* HDR10 */
+			ret_sei = NULL;
+			cur_sei_size = 0;
+		} else {
+		    /* SDR */
+			ret_sei = NULL;
+			cur_sei_size = 0;
+		}
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_PRIME_SL
+		/* PRIME */
+		if (is_prime_sl_enable() && !hdr10p)
+			ret_sei = check_media_sei(sei, size, FMT_TYPE_PRIME, &cur_sei_size);
+#endif
+	}
+	if (ret_sei && cur_sei_size)
+		*ret_size = cur_sei_size;
+	else
+		ret_sei = NULL;
+	return ret_sei;
+}
+EXPORT_SYMBOL(find_vframe_sei);
 
 /*********************************************************
  * Utilities
@@ -12784,6 +13021,15 @@ static ssize_t vd1_vd2_mux_store(struct class *cla,
 	return count;
 }
 
+static ssize_t duration_show(struct class *cla,
+			     struct class_attribute *attr, char *buf)
+{
+	/*duration: 800(120fps) 801(119.88fps) 960(100fps) 1600(60fps) 1920(50fps)*/
+	/*3200(30fps) 3203(29.97) 3840(25fps) 4000(24fps) 4004(23.976fps)*/
+
+	return snprintf(buf, 80, "duration:%lld\n", last_frame_duration);
+}
+
 static struct class_attribute amvideo_class_attrs[] = {
 	__ATTR(axis,
 	       0664,
@@ -13146,6 +13392,7 @@ static struct class_attribute amvideo_class_attrs[] = {
 			0644,
 			aipq_dbg_data_show,
 			aipq_dbg_data_store),
+	__ATTR_RO(duration),
 	__ATTR_NULL
 };
 

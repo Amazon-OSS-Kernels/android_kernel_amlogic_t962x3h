@@ -77,6 +77,8 @@
 #define  ATSC_DEMOD_REG_0X88                  ATSC_DEMOD_ADDR(0x88)
 
 /* AGC */
+#define  ATSC_AGC_REG_0X40                  (0x40)
+#define  ATSC_AGC_REG_0X42                  (0x42)
 #define  ATSC_AGC_REG_0X44                  (0x44)
 
 /* FEC */

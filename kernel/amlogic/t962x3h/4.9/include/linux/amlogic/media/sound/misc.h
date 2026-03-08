@@ -80,7 +80,7 @@ extern int aml_get_hdmiin_audio_packet(
 
 extern int get_hdmiin_audio_stable(void);
 extern int get_hdmi_sample_rate_index(void);
-
+extern int aml_get_cur_hdmi_packet_type(void);
 #endif
 
 #endif

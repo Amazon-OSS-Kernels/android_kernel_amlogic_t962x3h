@@ -32,3 +32,4 @@ int hdr10_tm_dynamic_proc(struct vframe_master_display_colour_s *p);
 #endif
 extern unsigned int hdr10_tm_enable;
 extern unsigned int cur_hdr10_tm_enable;
+extern unsigned int force_tog;

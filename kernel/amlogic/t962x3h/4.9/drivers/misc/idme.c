@@ -159,6 +159,17 @@ u64 idme_get_dev_flags_value(void)
 }
 EXPORT_SYMBOL(idme_get_dev_flags_value);
 
+int idme_get_model_name(char *model_name)
+{
+	struct device_node *idme_node;
+	int len;
+
+	idme_node = of_find_node_by_path("/idme/model_name");
+	strcpy(model_name, (char *)of_get_property(idme_node, "value", &len));
+	return 0;
+}
+EXPORT_SYMBOL(idme_get_model_name);
+
 static int __init idme_init(void)
 {
 	struct proc_dir_entry *proc_idme = NULL;

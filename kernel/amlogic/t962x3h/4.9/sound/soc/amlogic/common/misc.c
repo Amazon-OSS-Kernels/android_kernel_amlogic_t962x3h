@@ -24,6 +24,7 @@
 #include <linux/amlogic/media/frame_provider/tvin/tvin.h>
 #endif
 
+static int cur_packet_type;
 
 static const char *const audio_is_stable[] = {
 	"false",
@@ -327,8 +328,14 @@ int aml_get_hdmiin_audio_packet(
 		break;
 	}
 	ucontrol->value.integer.value[0] = val;
+	cur_packet_type = val;
 
 	return 0;
+}
+
+int aml_get_cur_hdmi_packet_type(void)
+{
+	return cur_packet_type;
 }
 
 #endif

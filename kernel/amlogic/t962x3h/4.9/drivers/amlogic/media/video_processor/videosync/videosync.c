@@ -54,7 +54,7 @@ static bool async_mode;/* default: false */
 
 static int duration_gcd = DURATION_GCD;
 
-static int omx_pts_interval_upper = 11000;
+static int omx_pts_interval_upper = 5500;
 static int omx_pts_interval_lower = -5500;
 #define DUR2PTS(x) ((x) - ((x) >> 4))
 
@@ -94,6 +94,10 @@ static int pts_log_enable[3] = {0, 0, 0};
 static int pts_escape_vsync = -1;
 static s32 vsync_pts_align = -DURATION_GCD / 2;
 static int pts_pattern_detected = -1;
+
+static int pip_continuous_drop_count;
+static bool pip_continuous_drop_flag;
+#define OMX_CONTINUOUS_DROP_LEVEL 5
 
 static int vp_print(char *name, int debug_flag, const char *fmt, ...)
 {
@@ -294,6 +298,10 @@ static inline void vpts_perform_pulldown(
 			}
 		}
 	}
+}
+bool videosync_need_drop(void)
+{
+	return pip_continuous_drop_flag;
 }
 
 void videosync_pcrscr_update(s32 inc, u32 base)
@@ -797,6 +805,20 @@ static int set_omx_pts(u32 *p)
 		vp_print(dev_s->vf_receiver_name, PRINT_TIMESTAMP,
 			"set omx_pts %u, hwc %d, not_reset %d, frame_num=%u\n",
 			tmp_pts, set_from_hwc, not_reset, frame_num);
+
+		if (set_from_hwc == 1) {
+			pip_continuous_drop_flag = false;
+			pip_continuous_drop_count = 0;
+		} else {
+			pip_continuous_drop_count++;
+			if (pip_continuous_drop_count >=
+					OMX_CONTINUOUS_DROP_LEVEL
+					|| !dev_s->first_frame_toggled) {
+				pip_continuous_drop_flag = true;
+				pr_info("countinous drop %d\n",
+						pip_continuous_drop_count);
+			}
+		}
 
 		if (dev_s->omx_check_previous_session) {
 			if (session != dev_s->omx_cur_session) {
@@ -1436,6 +1458,8 @@ static int videosync_receiver_event_fun(int type, void *data,
 		}
 		clear_ready_queue(dev_s);
 		clear_queued_queue(dev_s);
+		pip_continuous_drop_count = 0;
+		pip_continuous_drop_flag = false;
 
 		/*tsync_avevent(VIDEO_STOP, 0);*/
 		pr_info("videosync: unreg %p, %s\n",
@@ -1473,6 +1497,8 @@ static int videosync_receiver_event_fun(int type, void *data,
 		dev_s->first_frame_vpts = 0;
 		dev_s->vmaster_mode = 0;
 		dev_s->video_started = 0;
+		pip_continuous_drop_count = 0;
+		pip_continuous_drop_flag = false;
 	} else if (type == VFRAME_EVENT_PROVIDER_VFRAME_READY) {
 
 	} else if (type == VFRAME_EVENT_PROVIDER_START) {

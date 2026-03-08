@@ -175,6 +175,10 @@ int amlsd_get_platform_data(struct platform_device *pdev,
 				prop, pdata->max_req_size);
 		SD_PARSE_GPIO_NUM_PROP(child, "gpio_cd",
 				str, pdata->gpio_cd);
+		SD_PARSE_GPIO_NUM_PROP(child, "gpio_trigger12",
+				str, pdata->gpio_trigger12);
+		SD_PARSE_GPIO_NUM_PROP(child, "gpio_trigger13",
+				str, pdata->gpio_trigger13);
 		SD_PARSE_GPIO_NUM_PROP(child, "gpio_ro",
 				str, pdata->gpio_ro);
 		SD_PARSE_GPIO_NUM_PROP(child, "vol_switch",

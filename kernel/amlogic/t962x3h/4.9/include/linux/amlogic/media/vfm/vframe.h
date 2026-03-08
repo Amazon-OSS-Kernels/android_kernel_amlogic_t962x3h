@@ -102,6 +102,7 @@
 #define VFRAME_FLAG_DI_PW_VFM			0x80000
 #define VFRAME_FLAG_DI_PW_N_LOCAL		0x100000
 #define VFRAME_FLAG_DI_PW_N_EXT			0x200000
+#define VFRAME_FLAG_DISABLE_PONLY		0x400000
 #define VFRAME_FLAG_HF				0x800000 /*HF*/
 #define VFRAME_FLAG_KEEP_RATIO			0x80000000
 
@@ -614,5 +615,5 @@ void *get_sei_from_src_fmt(struct vframe_s *vf, u32 *sei_size);
 enum vframe_signal_fmt_e get_vframe_src_fmt(struct vframe_s *vf);
 s32 clear_vframe_src_fmt(struct vframe_s *vf);
 int get_md_from_src_fmt(struct vframe_s *vf);
-
+char *find_vframe_sei(struct vframe_s *vf, void *sei, u32 size, u32 *ret_size);
 #endif /* VFRAME_H */

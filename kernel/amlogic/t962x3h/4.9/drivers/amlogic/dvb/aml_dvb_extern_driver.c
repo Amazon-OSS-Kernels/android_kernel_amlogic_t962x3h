@@ -27,6 +27,7 @@
 #include <linux/amlogic/aml_dvb_extern.h>
 
 #include "aml_dvb_extern_driver.h"
+#include <linux/amlogic/boardinfo.h>
 
 #define AML_DVB_EXTERN_DEVICE_NAME    "aml_dvb_extern"
 #define AML_DVB_EXTERN_DRIVER_NAME    "aml_dvb_extern"
@@ -1055,13 +1056,15 @@ static int aml_dvb_extern_probe(struct platform_device *pdev)
 	else
 		dvbdev->tuner_cur = val;
 
+	if (isMeridianc()) {
+		dvbdev->tuner_num = 2;
+	}
 	for (i = 0; i < dvbdev->tuner_num; ++i) {
 		tops = dvb_tuner_ops_create();
 		if (!tops) {
 			pr_err("create dvb tuner ops fail.\n");
 			goto fail_tuner_create;
 		}
-
 		ret = aml_get_dts_tuner_config(pdev->dev.of_node,
 				&tops->cfg, i);
 		if (ret) {

@@ -38,6 +38,7 @@
 #define PHY_REQUEST_CLK_MIN		170000000
 #define PHY_REQUEST_CLK_MAX		370000000
 #define TIMER_STATE_CHECK		(1*HZ/100)
+#define LOW_BANDWIDTH_CLK		70000000
 
 struct freq_ref_s {
 	bool interlace;

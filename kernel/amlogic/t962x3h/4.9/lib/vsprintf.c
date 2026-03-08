@@ -598,6 +598,9 @@ char *string(char *buf, char *end, const char *s, struct printf_spec spec)
 		/* special replace for __func__ */
 		sprint_symbol_no_offset(name, (unsigned long)s);
 		s = name;
+		if (lim > KSYM_SYMBOL_LEN) {
+                    lim = KSYM_SYMBOL_LEN;
+		}
 	}
 #endif
 

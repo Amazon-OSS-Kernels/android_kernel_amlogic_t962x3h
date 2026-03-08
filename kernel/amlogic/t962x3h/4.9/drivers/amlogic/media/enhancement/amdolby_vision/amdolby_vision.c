@@ -1106,6 +1106,9 @@ MODULE_PARM_DESC(set_backlight_delay_vsync,    "\n set_backlight_delay_vsync\n")
 static bool disable_aoi;
 static int debug_cp_res;
 static int debug_disable_aoi;
+u32 aoi_info[2][4];/*top,left,bottom,right*/
+bool update_aoi_info;
+
 static int debug_dma_start_line;
 
 s16 brightness_off[8][2] = {
@@ -2022,12 +2025,22 @@ static int tv_dolby_core1_set
 	tv_dovi_setting->core1_reg_lut[1] =
 		0x0000000100000000 | run_mode;
 	if (debug_disable_aoi) {
-		if (debug_disable_aoi == 1)
+		if (debug_disable_aoi == 1) {
 			tv_dovi_setting->core1_reg_lut[44] =
 			0x0000002e00000000;
+			tv_dovi_setting->core1_reg_lut[45] =
+			0x0000002f00000000 | (vsize << 12) | hsize;
+		}
+	} else if (update_aoi_info) {
+		tv_dovi_setting->core1_reg_lut[44] =
+		0x0000002e00000000 | (aoi_info[1][0] << 12) | aoi_info[1][1];
+		tv_dovi_setting->core1_reg_lut[45] =
+		0x0000002f00000000 | (aoi_info[1][2] << 12) | aoi_info[1][3];
 	} else if (disable_aoi) {
 		tv_dovi_setting->core1_reg_lut[44] =
 		0x0000002e00000000;
+		tv_dovi_setting->core1_reg_lut[45] =
+		0x0000002f00000000 | (vsize << 12) | hsize;
 	}
 
 	if (reset)
@@ -9308,11 +9321,15 @@ static void bypass_pps_path(u8 pps_state)
 
 /*In some cases, from full screen to small window, the L5 metadata of the stream does*/
 /*not change, and the AOI area does not change, lead to the display to be incomplete*/
-/*if vpp disp size smaller than stream source size,  ignore AOI info*/
+/*if vpp disp size smaller than stream source size,  update AOI info*/
 static void update_aoi_flag(struct vframe_s *vf, u32 display_size)
 {
 	int tmp_h;
 	int tmp_v;
+	int h_ratio = 1;
+	int v_ratio = 1;
+	int disp_h;
+	int disp_v;
 
 	tmp_h = (vf->type & VIDTYPE_COMPRESS) ?
 		vf->compWidth : vf->width;
@@ -9320,17 +9337,79 @@ static void update_aoi_flag(struct vframe_s *vf, u32 display_size)
 		vf->compHeight : vf->height;
 	if (tmp_h != ((display_size >> 16) & 0xffff) ||
 		tmp_v != (display_size & 0xffff)) {
-		disable_aoi = true;
+		disp_h = (display_size >> 16) & 0xffff;
+		disp_v = display_size & 0xffff;
 		if (debug_dolby & 1)
 			pr_dolby_dbg
 			("disp size != src size %d %d->%d %d\n",
 			 tmp_h, tmp_v,
 			 (display_size >> 16) & 0xffff,
 			 display_size & 0xffff);
+		aoi_info[0][0] = (tv_dovi_setting->core1_reg_lut[44] >> 12) & 0xfff;
+		aoi_info[0][1] = (tv_dovi_setting->core1_reg_lut[44]) & 0xfff;
+		aoi_info[0][2] = (tv_dovi_setting->core1_reg_lut[45] >> 12) & 0xfff;
+		aoi_info[0][3] = (tv_dovi_setting->core1_reg_lut[45]) & 0xfff;
+
+		if (debug_dolby & 1)
+			pr_dolby_dbg
+			("ori AOI info %d %d %d %d\n",
+			 aoi_info[0][0], aoi_info[0][1],
+			 aoi_info[0][2], aoi_info[0][3]);
+
+		aoi_info[0][2] = tmp_v - 1 > aoi_info[0][2] ? tmp_v - 1 - aoi_info[0][2] : 0;
+		aoi_info[0][3] = tmp_h - 1 > aoi_info[0][3] ? tmp_h - 1 - aoi_info[0][3] : 0;
+
+		h_ratio = tmp_h / ((display_size >> 16) & 0xffff);
+		v_ratio = tmp_v / (display_size & 0xffff);
+		if (debug_dolby & 1)
+			pr_dolby_dbg
+			("ori crop info %d %d %d %d, ratio %d %d\n",
+			 aoi_info[0][0], aoi_info[0][1],
+			 aoi_info[0][2], aoi_info[0][3],
+			 h_ratio, v_ratio);
+
+		if ((h_ratio >= 2 || v_ratio >= 2) &&
+			(aoi_info[0][0] || aoi_info[0][1] || aoi_info[0][2] || aoi_info[0][3])) {
+			if (h_ratio >= 2) {
+				aoi_info[1][1] = aoi_info[0][1] / h_ratio;
+				aoi_info[1][3] = aoi_info[0][3] / h_ratio;
+			} else {
+				aoi_info[1][1] = aoi_info[0][1];
+				aoi_info[1][3] = aoi_info[0][3];
+			}
+			if (v_ratio >= 2) {
+				aoi_info[1][0] = aoi_info[0][0] / v_ratio;
+				aoi_info[1][2] = aoi_info[0][2] / v_ratio;
+			} else {
+				aoi_info[1][0] = aoi_info[0][0];
+				aoi_info[1][2] = aoi_info[0][2];
+			}
+			if (debug_dolby & 1)
+				pr_dolby_dbg("update crop info %d %d %d %d\n",
+						aoi_info[1][0], aoi_info[1][1],
+						aoi_info[1][2], aoi_info[1][3]);
+
+			aoi_info[1][2] = disp_v - 1 > aoi_info[1][2] ?
+				disp_v - 1 - aoi_info[1][2] : disp_v - 1;
+			aoi_info[1][3] = disp_h - 1 > aoi_info[1][3] ?
+				disp_h - 1 - aoi_info[1][3] : disp_h - 1;
+
+			if (debug_dolby & 1)
+				pr_dolby_dbg("update AOI info %d %d %d %d\n",
+						aoi_info[1][0], aoi_info[1][1],
+						aoi_info[1][2], aoi_info[1][3]);
+			update_aoi_info = true;
+		} else {
+			disable_aoi = true;
+			update_aoi_info = false;
+		}
 	} else {
 		disable_aoi = false;
+		update_aoi_info = false;
 	}
 }
+
+
 
 /* toggle mode: 0: not toggle; 1: toggle frame; 2: use keep frame */
 /* pps_state 0: no change, 1: pps enable, 2: pps disable */
@@ -9360,6 +9439,8 @@ int dolby_vision_process(struct vframe_s *vf,
 	bool reverse_changed = false;
 	static u8 last_toggle_mode;
 	struct vout_device_s *p_vout = NULL;
+	static struct vframe_s *last_vf;
+
 	if (!is_meson_box() && !is_meson_txlx() && !is_meson_tm2())
 		return -1;
 
@@ -9400,8 +9481,9 @@ int dolby_vision_process(struct vframe_s *vf,
 			}
 		}
 	} else {
-		if (vf)
+		if (vf && vf != last_vf)
 			update_aoi_flag(vf, display_size);
+		last_vf = vf;
 	}
 	if (dolby_vision_flags & FLAG_TOGGLE_FRAME)	{
 		h_size = (display_size >> 16) & 0xffff;

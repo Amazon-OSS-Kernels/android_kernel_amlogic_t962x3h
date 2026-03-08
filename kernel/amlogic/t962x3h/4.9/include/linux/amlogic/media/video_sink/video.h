@@ -293,6 +293,7 @@ extern unsigned int DI_POST_REG_RD(unsigned int addr);
 extern int DI_POST_WR_REG_BITS(u32 adr, u32 val, u32 start, u32 len);
 void DI_POST_UPDATE_MC(void);
 
+extern bool videosync_need_drop(void);
 extern void videosync_pcrscr_update(s32 inc, u32 base);
 extern void videosync_pcrscr_inc(s32 inc);
 void vsync_notify_videosync(void);
@@ -315,5 +316,6 @@ void set_tvin_delay_duration(u32 time);
 u32 get_tvin_delay(void);
 u32 get_tvin_delay_max_ms(void);
 u32 get_tvin_delay_min_ms(void);
+extern unsigned int idme_get_bootmode(void);
 
 #endif /* VIDEO_H */

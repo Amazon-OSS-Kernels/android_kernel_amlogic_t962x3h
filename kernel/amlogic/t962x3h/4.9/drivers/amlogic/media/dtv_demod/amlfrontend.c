@@ -43,6 +43,7 @@
 #include <linux/of_irq.h>
 #include <linux/interrupt.h>
 #include <linux/crc32.h>
+#include <linux/amlogic/boardinfo.h>
 
 #ifdef ARC_700
 #include <asm/arch/am_regs.h>
@@ -79,6 +80,25 @@ MODULE_PARM_DESC(std_lock_timeout, "\n\t\t atsc-c std lock timeout");
 static unsigned int std_lock_timeout = 1000;
 module_param(std_lock_timeout, int, 0644);
 
+//It is a timeout which is used for check atsc signal
+#define ATSC_TIME_CHECK_SIGNAL 900
+#define ATSC_TIME_START_CCI 1500
+MODULE_PARM_DESC(atsc_t_lock_continuous_cnt, "\n\t\t atsc-t lock signal continuous counting");
+static unsigned int atsc_t_lock_continuous_cnt = 1;
+module_param(atsc_t_lock_continuous_cnt, int, 0644);
+
+MODULE_PARM_DESC(atsc_t_lost_continuous_cnt, "\n\t\t atsc-t lost signal continuous counting");
+static unsigned int atsc_t_lost_continuous_cnt = 15;
+module_param(atsc_t_lost_continuous_cnt, int, 0644);
+
+MODULE_PARM_DESC(atsc_check_signal_time, "\n\t\t atsc check signal time");
+static unsigned int atsc_check_signal_time = ATSC_TIME_CHECK_SIGNAL;
+module_param(atsc_check_signal_time, int, 0644);
+
+MODULE_PARM_DESC(atsc_agc_target, "\n\t\t atsc agc target");
+static unsigned char atsc_agc_target = 0x18;
+module_param(atsc_agc_target, byte, 0644);
+
 /*use this flag to mark the new method for dvbc channel fast search
  *it's disabled as default, can be enabled if needed
  *we can make it always enabled after all testing are passed
@@ -96,7 +116,7 @@ struct amldtvdemod_device_s *dtvdd_devp;
 static int last_lock = -1;
 static int cci_thread;
 static int freq_dvbc;
-static struct aml_demod_sta demod_status;
+struct aml_demod_sta demod_status;
 static int memstart = 0x1ef00000;/* move to aml_dtv_demod*/
 long *mem_buf;
 
@@ -1440,7 +1460,7 @@ static unsigned int atsc_check_cci(struct amldtvdemod_device_s *devp)
 	fsm_status = atsc_read_reg_v4(ATSC_CNTR_REG_0X2E);
 	PR_ATSC("fsm[%x]not lock,need to run cci\n", fsm_status);
 	time[0] = jiffies_to_msecs(jiffies);
-	set_cr_ck_rate_new();
+	set_cr_ck_rate_new(devp);
 	time[1] = jiffies_to_msecs(jiffies);
 	time_table[0] = (time[1] - time[0]);
 	fsm_status = atsc_read_reg_v4(ATSC_CNTR_REG_0X2E);
@@ -1483,7 +1503,7 @@ static unsigned int atsc_check_cci(struct amldtvdemod_device_s *devp)
 			break;
 		} else if (fsm_status <= IDLE) {
 			PR_ATSC("atsc idle,retune, and reset\n");
-			set_cr_ck_rate_new();
+			set_cr_ck_rate_new(devp);
 			atsc_reset_new();
 			break;
 		}
@@ -1702,7 +1722,30 @@ static int gxtv_demod_atsc_set_frontend(struct dvb_frontend *fe)
 	dtvdd_devp->freq = c->frequency / 1000;
 	last_lock = -1;
 	dtvdd_devp->atsc_mode = c->modulation;
+
+	if (isMeridianc() && c->modulation > QAM_AUTO) {
+		if (fe->ops.tuner_ops.get_if_frequency)
+			fe->ops.tuner_ops.get_if_frequency(fe, tuner_freq);
+		/*bit 2: invert specturm, for r842 tuner AGC control*/
+		if (tuner_freq[0] == 1)
+			atsc_write_reg_v4(ATSC_DEMOD_REG_0X56, 0x4);
+		else
+			atsc_write_reg_v4(ATSC_DEMOD_REG_0X56, 0x0);
+
+		if (tuner_find_by_name(fe, "r842")) {
+			/* adjust IF AGC bandwidth, default 0x40208007. */
+			/* for atsc agc speed test >= 85Hz. */
+			atsc_write_reg_v4(ATSC_AGC_REG_0X42, 0x40208003);
+
+			//agc target
+			atsc_write_reg_bits_v4(ATSC_AGC_REG_0X40,
+				atsc_agc_target, 0, 8);
+		}
+	}
+
 	tuner_set_params(fe);
+	if (tuner_find_by_name(fe, "r842") && c->modulation > QAM_AUTO)
+		msleep(200);
 
 	if ((c->modulation <= QAM_AUTO) && (c->modulation != QPSK)) {
 		if (cpu_after_eq(MESON_CPU_MAJOR_ID_TL1)) {
@@ -1739,7 +1782,7 @@ static int gxtv_demod_atsc_set_frontend(struct dvb_frontend *fe)
 			qam_write_reg(0x30, 0x41f2f69);
 		}
 	} else if (c->modulation > QAM_AUTO) {
-		if (fe->ops.tuner_ops.get_if_frequency)
+		if (!isMeridianc() && fe->ops.tuner_ops.get_if_frequency)
 			fe->ops.tuner_ops.get_if_frequency(fe, tuner_freq);
 		if (cpu_after_eq(MESON_CPU_MAJOR_ID_TL1)) {
 			Val_0x6a.bits = atsc_read_reg_v4(ATSC_DEMOD_REG_0X6A);
@@ -1756,16 +1799,43 @@ static int gxtv_demod_atsc_set_frontend(struct dvb_frontend *fe)
 			atsc_write_reg_v4(ATSC_DEMOD_REG_0X5D, 0x14400202);
 			/* CW bin frequency */
 			atsc_write_reg_v4(ATSC_DEMOD_REG_0X61, 0x2ee);
+			if (isMeridian()) {
+				//Optimize CN to 15dB
+				atsc_write_reg_v4(ATSC_EQ_REG_0XA9, 0x77744);
+				atsc_write_reg_v4(ATSC_EQ_REG_0X9E, 0xd0d0d09);
+			}
 
+			if (!isMeridianc()) {
 			/*bit 2: invert specturm, for r842 tuner AGC control*/
-			if (tuner_freq[0] == 1)
-				atsc_write_reg_v4(ATSC_DEMOD_REG_0X56, 0x4);
-			else
-				atsc_write_reg_v4(ATSC_DEMOD_REG_0X56, 0x0);
+				if (tuner_freq[0] == 1)
+					atsc_write_reg_v4(ATSC_DEMOD_REG_0X56,
+						0x4);
+				else
+					atsc_write_reg_v4(ATSC_DEMOD_REG_0X56,
+						0x0);
+
+				if (tuner_find_by_name(fe, "r842")) {
+				/* adjust IF AGC bandwidth, default 0x40208007. */
+					/* for atsc agc speed test >= 85Hz. */
+					atsc_write_reg_v4(ATSC_AGC_REG_0X42,
+						0x40208003);
+
+					//agc target
+					atsc_write_reg_bits_v4(
+						ATSC_AGC_REG_0X40,
+						atsc_agc_target, 0, 8);
+				}
+			}
 
 			if (demod_status.adc_freq == ADC_CLK_24M) {
-				atsc_write_reg_v4(ATSC_DEMOD_REG_0X54,
-					0x1aaaaa);
+				if (tuner_find_by_name(fe, "r842") &&
+					tuner_freq[1] == DEMOD_4_57M_IF * 1000) {
+					demod_status.ch_if = DEMOD_4_57M_IF;
+					//4.57M IF, 2^23 * IF / Fs.
+					atsc_write_reg_v4(ATSC_DEMOD_REG_0X54, 0x185F92);
+				} else {
+					atsc_write_reg_v4(ATSC_DEMOD_REG_0X54, 0x1aaaaa);
+				}
 
 				atsc_write_reg_v4(ATSC_DEMOD_REG_0X55,
 					0x3ae28d);
@@ -2120,6 +2190,196 @@ void atsc_polling(struct dvb_frontend *fe, enum fe_status *status)
 
 }
 
+static void atsc_optimize_cn(bool reset)
+{
+	unsigned int r_c3, ave_c3, r_a9, r_9e, r_d8, ave_d8;
+	static unsigned int arr_c3[10] = { 0 };
+	static unsigned int arr_d8[10] = { 0 };
+	static unsigned int times;
+
+	if (!cpu_after_eq(MESON_CPU_MAJOR_ID_TL1))
+		return;
+
+	if (reset) {
+		times = 0;
+		memset(arr_c3, 0, sizeof(int) * 10);
+		memset(arr_d8, 0, sizeof(int) * 10);
+		return;
+	}
+
+	times++;
+	if (times == 10000)
+		times = 20;
+	r_c3 = atsc_read_reg_v4(ATSC_EQ_REG_0XC3);
+	r_d8 = atsc_read_reg_v4(ATSC_EQ_REG_0XD8);
+	arr_c3[times % 10] = r_c3;
+	arr_d8[times % 10] = r_d8;
+	if (times < 10) {
+		ave_c3 = 0;
+		ave_d8 = 0;
+	} else {
+		ave_c3 = (arr_c3[0] + arr_c3[1] + arr_c3[2] + arr_c3[3] + arr_c3[4] +
+			arr_c3[5] + arr_c3[6] + arr_c3[7] + arr_c3[8] + arr_c3[9]) / 10;
+		ave_d8 = (arr_d8[0] + arr_d8[1] + arr_d8[2] + arr_d8[3] + arr_d8[4] +
+			arr_d8[5] + arr_d8[6] + arr_d8[7] + arr_d8[8] + arr_d8[9]) / 10;
+	}
+
+	r_a9 = atsc_read_reg_v4(ATSC_EQ_REG_0XA9);
+	r_9e = atsc_read_reg_v4(ATSC_EQ_REG_0X9E);
+	PR_ATSC("r_a9=0x%x, r_9e=0x%x, ave_c3=0x%x, ave_d8=0x%x\n", r_a9, r_9e, ave_c3, ave_d8);
+	if ((r_a9 != 0x77744 || r_9e != 0xd0d0d09) &&
+		ave_d8 < 0x1000 && ave_c3 > 0x240) {
+		PR_ATSC("set cn to 15dB\n");
+		atsc_write_reg_v4(ATSC_EQ_REG_0XA9, 0x77744);
+		atsc_write_reg_v4(ATSC_EQ_REG_0X9E, 0xd0d0d09);
+	} else if ((r_a9 != 0x44444 || r_9e != 0xa080809) &&
+		(ave_d8 > 0x2000 || (ave_c3 < 0x170 && ave_c3 != 0))) {
+		PR_ATSC("set cn to 15.8dB\n");
+		atsc_write_reg_v4(ATSC_EQ_REG_0XA9, 0x44444);
+		atsc_write_reg_v4(ATSC_EQ_REG_0X9E, 0xa080809);
+	}
+}
+
+static void atsc_read_status(struct dvb_frontend *fe, enum fe_status *status,
+	unsigned int re_tune)
+{
+	int fsm_status;//0:none;1:lock;-1:lost
+	int strenth;
+	unsigned int sys_sts;
+	struct amldtvdemod_device_s *devp = dtvdemod_get_dev();
+	static int lock_status;
+	static int peak;
+	unsigned int ber, ser, snr;
+	//Threshold value of times of continuous lock and lost
+	int lock_continuous_cnt = atsc_t_lock_continuous_cnt > 1 ?
+		atsc_t_lock_continuous_cnt : 1;
+	int lost_continuous_cnt = atsc_t_lost_continuous_cnt > 1 ?
+		atsc_t_lost_continuous_cnt : 1;
+	int check_signal_time = atsc_check_signal_time > 0 ?
+		atsc_check_signal_time : ATSC_TIME_CHECK_SIGNAL;
+
+	if (!unlikely(devp)) {
+		PR_ERR("%s, devp is NULL\n", __func__);
+		return;
+	}
+
+	if (re_tune) {
+		lock_status = 0;
+		devp->last_status = 0;
+		peak = 0;
+		devp->time_start = jiffies_to_msecs(jiffies);
+		*status = 0;
+		atsc_optimize_cn(true);
+
+		return;
+	}
+
+	if (!get_dtvpll_init_flag())
+		return;
+
+	strenth = tuner_get_ch_power(fe);
+	/*agc control,fine tune strength*/
+	if (!strncmp(fe->ops.tuner_ops.info.name, "r842", 4)) {
+		strenth += 15;
+		if (strenth <= -80)
+			strenth = atsc_get_power_strength(
+				atsc_read_reg_v4(0x44) & 0xfff, strenth);
+	}
+
+	PR_ATSC("tuner strength: %d\n", strenth);
+	if (strenth < THRD_TUNER_STRENTH_ATSC) {
+		*status = FE_TIMEDOUT;
+		devp->last_status = *status;
+		PR_ATSC("tuner:no signal!\n");
+		return;
+	}
+
+	devp->time_passed = jiffies_to_msecs(jiffies) - devp->time_start;
+	sys_sts = atsc_read_reg_v4(ATSC_CNTR_REG_0X2E) & 0xff;
+	snr = atsc_read_snr_10();
+	ber = atsc_read_ber();
+	ser = atsc_read_ser();
+	PR_ATSC("fsm=0x%x, snr=%d.%d, ber=%d, ser=%d, time_passed=%d\n",
+		sys_sts, snr / 10, snr % 10, ber, ser, devp->time_passed);
+
+	if (sys_sts >= ATSC_LOCK) {
+		atsc_optimize_cn(false);
+		fsm_status = 1;
+		peak = 1;//atsc signal
+	} else {
+		if (sys_sts >= (CR_PEAK_LOCK & 0xf0))
+			peak = 1;//atsc signal
+
+		if (sys_sts >= ATSC_SYNC_LOCK ||
+			devp->time_passed <= check_signal_time ||
+			(devp->time_passed <= TIMEOUT_ATSC && peak)) {
+			fsm_status = 0;
+		} else {
+			fsm_status = -1;
+
+			//If the fsm value read within check time cannot reach
+			//0x60 or above, it means that the signal is not an
+			//ATSC signal.
+			if (peak == 0) {//not atsc signal
+				*status = FE_TIMEDOUT;
+				PR_ATSC("not atsc signal\n");
+
+				goto finish;
+			}
+		}
+
+		if (devp->time_passed >= ATSC_TIME_START_CCI &&
+			(sys_sts & 0xf0) == (CR_PEAK_LOCK & 0xf0))
+			atsc_check_cci(devp);
+	}
+
+	//The status is updated only when the status continuously reaches
+	//the threshold of times
+	if (fsm_status == -1) {
+		if (lock_status >= 0) {
+			lock_status = -1;
+			PR_ATSC("==> lost signal first\n");
+		} else if (lock_status <= -lost_continuous_cnt) {
+			lock_status = -lost_continuous_cnt;
+			PR_ATSC("==> lost signal continue\n");
+		} else {
+			lock_status--;
+			PR_ATSC("==> lost signal times%d\n", lock_status);
+		}
+
+		if (lock_status <= -lost_continuous_cnt)
+			*status = FE_TIMEDOUT;
+		else
+			*status = 0;
+	} else if (fsm_status == 1) {
+		if (lock_status <= 0) {
+			lock_status = 1;
+			PR_ATSC("==> lock signal first\n");
+		} else if (lock_status >= lock_continuous_cnt) {
+			lock_status = lock_continuous_cnt;
+			PR_ATSC("==> lock signal continue\n");
+		} else {
+			lock_status++;
+			PR_ATSC("==> lock signal times:%d\n", lock_status);
+		}
+
+		if (lock_status >= lock_continuous_cnt)
+			*status = FE_HAS_LOCK | FE_HAS_SIGNAL |
+				FE_HAS_CARRIER | FE_HAS_VITERBI | FE_HAS_SYNC;
+		else
+			*status = 0;
+	} else {
+		*status = 0;
+	}
+
+finish:
+	if (devp->last_status != *status && *status != 0) {
+		PR_INFO("!!  >> %s << !!, freq=%d\n", *status == FE_TIMEDOUT ?
+			"UNLOCK" : "LOCK", fe->dtv_property_cache.frequency);
+		devp->last_status = *status;
+	}
+}
+
 static int gxtv_demod_atsc_tune(struct dvb_frontend *fe, bool re_tune,
 	unsigned int mode_flags, unsigned int *delay, enum fe_status *status)
 {
@@ -2154,7 +2414,12 @@ static int gxtv_demod_atsc_tune(struct dvb_frontend *fe, bool re_tune,
 			PR_ATSC("j83\n");
 			atsc_j83b_detect_first(fe, status);
 		} else if (c->modulation > QAM_AUTO) {
-			atsc_detect_first(fe, status, re_tune);
+			if (isHazel() || isMeridian()) {
+				atsc_detect_first(fe, status, re_tune);
+			} else {
+				*delay = HZ / 20;
+				atsc_read_status(fe, status, re_tune);
+			}
 		}
 
 		return 0;
@@ -2167,7 +2432,12 @@ static int gxtv_demod_atsc_tune(struct dvb_frontend *fe, bool re_tune,
 
 	if (cpu_after_eq(MESON_CPU_MAJOR_ID_TL1)) {
 		if (c->modulation > QAM_AUTO)
-			atsc_detect_first(fe, status, re_tune);
+			if (isHazel() || isMeridian()) {
+				atsc_detect_first(fe, status, re_tune);
+			} else {
+				*delay = HZ / 20;
+				atsc_read_status(fe, status, re_tune);
+			}
 		else if (c->modulation <= QAM_AUTO &&	(c->modulation !=  QPSK))
 			atsc_j83b_detect_first(fe, status);
 	} else {
@@ -3505,7 +3775,7 @@ static void set_agc_pinmux(enum fe_delivery_system delsys, unsigned int on)
 
 	if (on) {
 		devp->pin = devm_pinctrl_get_select(devp->dev, pin_name);
-		if (IS_ERR(devp->pin)) {
+		if (IS_ERR(devp->pin) || isMeridian()) {
 			devp->pin = NULL;
 			PR_ERR("get agc pins fail: %s\n", pin_name);
 		}
@@ -3900,7 +4170,8 @@ int dtvdemod_set_iccfg_by_dts(struct platform_device *pdev)
 		PR_INFO("no reserved mem.\n");
 
 	/*agc pinmux: option*/
-	if (of_get_property(pdev->dev.of_node, "pinctrl-names", NULL)) {
+	if (of_get_property(pdev->dev.of_node, "pinctrl-names", NULL) &&
+		!isMeridian()) {
 		devp->pin = devm_pinctrl_get(&pdev->dev);
 
 		pin_agc_st = pinctrl_lookup_state(devp->pin, "if_agc_pins");

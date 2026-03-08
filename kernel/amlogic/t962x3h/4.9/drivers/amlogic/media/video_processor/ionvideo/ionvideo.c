@@ -16,6 +16,7 @@
  */
 
 #define DEBUG
+#include <linux/sched.h>
 #include <linux/amlogic/media/vout/vout_notify.h>
 #include <linux/amlogic/media/vfm/vframe.h>
 #include <linux/amlogic/media/vfm/vframe_provider.h>
@@ -40,6 +41,10 @@ static struct mutex ppmgr2_ge2d_canvas_mutex;
 static unsigned int video_nr_base = 13;
 module_param(video_nr_base, uint, 0644);
 MODULE_PARM_DESC(video_nr_base, "videoX start number, 13 is the base nr");
+
+static unsigned int timeout_value = 4000;
+module_param(timeout_value, uint, 0644);
+MODULE_PARM_DESC(timeout_value, "timeout value");
 
 static int scaling_rate = 100;
 static int ionvideo_seek_flag;
@@ -495,6 +500,7 @@ static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 {
 	struct ionvideo_dev *dev = video_drvdata(file);
 	struct ionvideo_dmaqueue *dma_q = &dev->vidq;
+	struct sched_param param = {.sched_priority = 2};
 
 	dev->is_omx_video_started = 1;
 	dma_q->vb_ready = 0;
@@ -514,6 +520,9 @@ static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 		v4l2_err(&dev->v4l2_dev, "kernel_thread() failed\n");
 		return PTR_ERR(dma_q->kthread);
 	}
+	if (sched_setscheduler(dma_q->kthread, SCHED_FIFO, &param))
+		pr_err("ionvideo:Could not set realtime priority.\n");
+
 	/* Wakes thread */
 	wake_up_interruptible(&dma_q->wq);
 
@@ -982,13 +991,14 @@ static int video_receiver_event_fun(int type, void *data, void *private_data)
 	if (type == VFRAME_EVENT_PROVIDER_UNREG) {
 		dev->receiver_register = 0;
 		dev->is_omx_video_started = 0;
+		pr_info("unreg:ionvideo_in index=%d\n", dev->inst);
 		if (dev->active_state == ION_ACTIVE) {
 			/*if player killed thread may have exit.*/
 			dev->active_state = ION_INACTIVE_REQ;
 			dev->wait_ge2d_timeout = false;
 			timeout = wait_for_completion_timeout(
 				&dev->inactive_done,
-				msecs_to_jiffies(200));
+				msecs_to_jiffies(timeout_value));
 			if (!timeout) {
 				IONVID_INFO("unreg:wait timeout\n");
 				dev->wait_ge2d_timeout = true;
@@ -996,14 +1006,15 @@ static int video_receiver_event_fun(int type, void *data, void *private_data)
 		}
 
 		/*tsync_avevent(VIDEO_STOP, 0);*/
-		pr_info("unreg:ionvideo\n");
+		pr_info("unreg:ionvideo index=%d wait left =%d\n", dev->inst, timeout);
 	} else if (type == VFRAME_EVENT_PROVIDER_REG) {
+		pr_info("reg:ionvideo_in index=%d\n", dev->inst);
 		dev->is_omx_video_started = 1;
 		dev->ppmgr2_dev.interlaced_num = 0;
 		dev->active_state = ION_ACTIVE;
 		init_completion(&dev->inactive_done);
 		dev->receiver_register = 1;
-		pr_info("reg:ionvideo\n");
+		pr_info("reg:ionvideo_out index=%d\n", dev->inst);
 	} else if (type == VFRAME_EVENT_PROVIDER_QUREY_STATE) {
 		if (dev->vf_wait_cnt > 1)
 			return RECEIVER_INACTIVE;

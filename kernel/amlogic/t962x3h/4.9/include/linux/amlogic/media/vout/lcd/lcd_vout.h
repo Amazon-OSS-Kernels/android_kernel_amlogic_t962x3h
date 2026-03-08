@@ -17,6 +17,7 @@
 
 #ifndef _INC_LCD_VOUT_H
 #define _INC_LCD_VOUT_H
+#include <linux/delay.h>
 #include <linux/types.h>
 #include <linux/platform_device.h>
 #include <linux/amlogic/aml_gpio_consumer.h>
@@ -24,6 +25,9 @@
 #include <linux/amlogic/media/vout/vout_notify.h>
 #include <linux/amlogic/iomap.h>
 #include <linux/amlogic/media/vout/lcd/lcd_tcon_data.h>
+#ifdef CONFIG_HAS_WAKELOCK
+#include <linux/wakelock.h>
+#endif
 
 extern void lcd_vlock_m_update(unsigned int vlock_m);
 extern void lcd_vlock_frac_update(unsigned int vlock_farc);
@@ -85,6 +89,7 @@ do { \
  * global control define
  * **********************************
  */
+
 enum lcd_mode_e {
 	LCD_MODE_TV = 0,
 	LCD_MODE_TABLET,
@@ -179,6 +184,9 @@ struct lcd_timing_s {
 	/* unsigned int vsync_h_phase; // [31]sign, [15:0]value */
 	unsigned int h_offset;
 	unsigned int v_offset;
+
+	unsigned char pre_de_h;
+	unsigned char pre_de_v;
 
 	unsigned short de_hs_addr;
 	unsigned short de_he_addr;
@@ -371,6 +379,27 @@ struct p2p_config_s {
 	unsigned int phy_preem;
 };
 
+struct phy_lane_s {
+	unsigned int preem;
+	unsigned int amp;
+};
+
+#define CH_LANE_MAX 32
+struct phy_config_s {
+	unsigned int flag;
+	unsigned int vswing;
+	unsigned int ext_pullup;
+	unsigned int vcm;
+	unsigned int odt;
+	unsigned int ref_bias;
+	unsigned int mode;
+	unsigned int weakly_pull_down;
+	unsigned int lane_num;
+	unsigned int vswing_level;
+	unsigned int preem_level;
+	struct phy_lane_s lane[CH_LANE_MAX];
+};
+
 struct lcd_control_config_s {
 	struct ttl_config_s *ttl_config;
 	struct lvds_config_s *lvds_config;
@@ -378,6 +407,7 @@ struct lcd_control_config_s {
 	struct dsi_config_s *mipi_config;
 	struct mlvds_config_s *mlvds_config;
 	struct p2p_config_s *p2p_config;
+	struct phy_config_s *phy_cfg;
 	unsigned int *vlock_param;
 };
 
@@ -393,6 +423,7 @@ enum lcd_power_type_e {
 	LCD_POWER_TYPE_WAIT_GPIO,
 	LCD_POWER_TYPE_CLK_SS,
 	LCD_POWER_TYPE_TCON_SPI_DATA_LOAD,
+	LCD_POWER_TYPE_SWITCH_DURATION,    /* 7 */
 	LCD_POWER_TYPE_MAX,
 };
 
@@ -443,6 +474,12 @@ struct lcd_power_ctrl_s {
 	struct lcd_power_step_s power_off_step[LCD_PWR_STEP_MAX];
 	int power_on_step_max; /*  internal use for debug */
 	int power_off_step_max; /* internal use for debug */
+	unsigned int on_off_duration;
+	unsigned int off_on_duration;
+	unsigned long long pwr_on_start_time;
+	unsigned long long pwr_on_done_time;
+	unsigned long long pwr_off_start_time;
+	unsigned long long pwr_off_done_time;
 };
 
 #define LCD_INIT_LEVEL_NORMAL         0
@@ -504,6 +541,7 @@ struct aml_lcd_drv_s {
 	unsigned char lcd_clk_path; /* 0=hpll, 1=gp0_pll */
 	unsigned char lcd_config_load;
 	unsigned char lcd_resume_type; /* 0=directly, 1=workqueue */
+	unsigned char lcd_suspend_type; /* 0=directly, 1=workqueue */
 	unsigned char lcd_auto_test;
 	unsigned char lcd_test_state;
 	unsigned char lcd_test_flag;
@@ -518,6 +556,7 @@ struct aml_lcd_drv_s {
 	struct vinfo_s *lcd_info;
 	struct class *lcd_debug_class;
 	struct lcd_boot_ctrl_s *boot_ctrl;
+	void *debug_info;
 
 	int fr_auto_policy;
 	int fr_mode;
@@ -540,16 +579,29 @@ struct aml_lcd_drv_s {
 	struct workqueue_struct *workqueue;
 	struct work_struct lcd_probe_work;
 	struct work_struct  lcd_resume_work;
+	struct work_struct  lcd_suspend_work;
 	struct resource *res_vsync_irq;
 	struct resource *res_vsync2_irq;
 	struct resource *res_vx1_irq;
 	struct resource *res_tcon_irq;
 
 	struct mutex power_mutex;
+#ifdef CONFIG_HAS_WAKELOCK
+	struct wake_lock wake_lock;
+#endif
 	spinlock_t isr_lock; /* for mute and test isr */
 };
 
 extern struct aml_lcd_drv_s *aml_lcd_get_driver(void);
+
+#define LCD_DELAY_SLEEP_THRESHOLD (100) //ms
+static inline void lcd_wait_ms(size_t ms)
+{
+	if (ms > LCD_DELAY_SLEEP_THRESHOLD)
+		msleep(ms);
+	else
+		mdelay(ms);
+}
 
 /* **********************************
  * IOCTL define

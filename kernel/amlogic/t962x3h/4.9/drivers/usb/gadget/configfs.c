@@ -15,7 +15,7 @@
 #include <linux/usb/ch9.h>
 
 #ifdef CONFIG_USB_CONFIGFS_F_ACC
-extern int acc_ctrlrequest(struct usb_composite_dev *cdev,
+extern int acc_ctrlrequest_composite(struct usb_composite_dev *cdev,
 				const struct usb_ctrlrequest *ctrl);
 void acc_disconnect(void);
 #endif
@@ -1307,8 +1307,12 @@ static int configfs_composite_bind(struct usb_gadget *gadget,
 	wakeup_source_init(&Gadget_Lock.wakesrc, "gadget-connect");
 #endif
 	ret = composite_dev_prepare(composite, cdev);
-	if (ret)
+	if (ret) {
+#ifdef CONFIG_AMLOGIC_USB
+		wakeup_source_trash(&Gadget_Lock.wakesrc);
+#endif
 		return ret;
+	}
 	/* and now the gadget bind */
 	ret = -EINVAL;
 
@@ -1429,6 +1433,9 @@ err_purge_funcs:
 	purge_configs_funcs(gi);
 err_comp_cleanup:
 	composite_dev_cleanup(cdev);
+#ifdef CONFIG_AMLOGIC_USB
+	wakeup_source_trash(&Gadget_Lock.wakesrc);
+#endif
 	return ret;
 }
 
@@ -1540,7 +1547,7 @@ static int android_setup(struct usb_gadget *gadget,
 
 #ifdef CONFIG_USB_CONFIGFS_F_ACC
 	if (value < 0)
-		value = acc_ctrlrequest(cdev, c);
+		value = acc_ctrlrequest_composite(cdev, c);
 #endif
 
 	if (value < 0)
